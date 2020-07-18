@@ -112,7 +112,7 @@ func (o *Post) IsValid(maxPostSize int) *AppError {
 		return NewAppError("Post.IsValid", "model.post.is_valid.original_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if utf8.RuneCountInString(o.Content) > maxPostSize || utf8.RuneCountInString(o.Content) <= POST_CONTENT_MIN_RUNES {
+	if utf8.RuneCountInString(o.Content) > maxPostSize || utf8.RuneCountInString(o.Content) < POST_CONTENT_MIN_RUNES {
 		return NewAppError("Post.IsValid", "model.post.is_valid.content.app_error", nil, "id="+o.Id, http.StatusBadRequest)
 	}
 
