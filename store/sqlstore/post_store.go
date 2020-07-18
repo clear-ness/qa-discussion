@@ -405,6 +405,7 @@ var specialSearchChar = []string{
 	"~",
 	"@",
 	":",
+	".",
 }
 
 func (s *SqlPostStore) GetPosts(options *model.GetPostsOptions, getCount bool) (model.Posts, int64, *model.AppError) {
@@ -720,7 +721,9 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 
 		splitTerms := []string{}
 		for _, t := range strings.Fields(terms) {
-			splitTerms = append(splitTerms, "+"+t)
+			if len(t) >= model.TAG_MIN_RUNES {
+				splitTerms = append(splitTerms, "+"+t)
+			}
 		}
 		terms = strings.Join(splitTerms, " ") + excludeClause
 
