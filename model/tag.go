@@ -10,7 +10,7 @@ const (
 	TAG_MIN_RUNES = 3
 	TAG_MAX_RUNES = 64
 
-	AUTOCOMPLETE_TAGS_LIMIT = 5
+	AUTOCOMPLETE_TAGS_LIMIT = 20
 )
 
 type Tag struct {
