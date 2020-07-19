@@ -10,6 +10,7 @@ import (
 
 	"github.com/clear-ness/qa-discussion/model"
 	"github.com/clear-ness/qa-discussion/utils/fileutils"
+	"github.com/pkg/errors"
 )
 
 func resolveConfigFilePath(path string) (string, error) {
@@ -100,7 +101,7 @@ func (fs *FileStore) Load() (err error) {
 	defer func() {
 		closeErr := f.Close()
 		if err == nil && closeErr != nil {
-			//err = errors.Wrap(closeErr, "failed to close")
+			err = errors.Wrap(closeErr, "failed to close")
 		}
 	}()
 
