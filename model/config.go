@@ -96,6 +96,10 @@ func (s *ServiceSettings) SetDefaults() {
 		s.LetsEncryptCertificateCacheFile = NewString("./config/letsencrypt.cache")
 	}
 
+	if s.ConnectionSecurity == nil {
+		s.ConnectionSecurity = NewString("")
+	}
+
 	if s.ReadTimeout == nil {
 		s.ReadTimeout = NewInt(SERVICE_SETTINGS_DEFAULT_READ_TIMEOUT)
 	}
