@@ -38,7 +38,7 @@ func TestAutocompleteTags(t *testing.T) {
 
 	data, resp = Client.AutocompleteTags("t")
 	CheckNoError(t, resp)
-	require.Len(t, data, model.AUTOCOMPLETE_TAGS_LIMIT, "invalid tags")
+	require.Len(t, data, model.MAX_PARSE_TAG_COUNT, "invalid tags")
 	for i := 0; i < model.MAX_PARSE_TAG_COUNT; i++ {
 		require.Equal(t, data[i].Content, strings.Fields(tags)[i], "autocomplete tags didn't match")
 	}
