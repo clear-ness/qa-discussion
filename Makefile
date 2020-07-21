@@ -10,19 +10,19 @@ dev-install:
 	go get -u github.com/pressly/goose/cmd/goose
 	go get -u github.com/go-delve/delve
 
-debug-server: dev-install
+debug-server:
 	dlv debug ${MAIN_FILE}
 
-migrate: dev-install
+migrate:
 	./db/migrate.sh up
 
-migrate-reset: dev-install
+migrate-reset:
 	./db/migrate.sh reset
 
-migrate-test: dev-install
+migrate-test:
 	./db/migrate_test.sh up
 
-migrate-test-reset: dev-install
+migrate-test-reset:
 	./db/migrate_test.sh reset
 
 run-test:

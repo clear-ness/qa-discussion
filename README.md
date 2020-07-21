@@ -61,6 +61,12 @@ before running this app, please create a config.json file like below and mv it i
 }
 ```
 
+install dev tools for migration, debug:
+
+```
+make dev-install
+```
+
 migration of db(mysql):
 
 ```
