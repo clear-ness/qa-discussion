@@ -101,8 +101,9 @@ make migrate-test
 ```
 
 run tests:
+
 ```
-make run-test
+go test $(go list ./...)
 ```
 
 ### License

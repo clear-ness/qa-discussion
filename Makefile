@@ -25,9 +25,6 @@ migrate-test:
 migrate-test-reset:
 	./db/migrate_test.sh reset
 
-run-test:
-	go test $(go list ./...)
-
 build-linux:
 	env GOOS=linux GOARCH=amd64 go build ${MAIN_FILE}
 
