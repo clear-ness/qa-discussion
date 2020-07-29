@@ -632,7 +632,7 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 
 	if len(options.Ids) > 0 {
 		query = query.Where(sq.And{
-			sq.Expr(fmt.Sprintf("Id IN ('%s')", strings.Join(options.Ids, "', '"))),
+			sq.Expr(`Id IN (?)`, options.Ids[0]),
 		})
 	}
 
