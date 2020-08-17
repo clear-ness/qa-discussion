@@ -36,6 +36,10 @@ type Params struct {
 	InboxInterval   string
 	TagName         string
 	TimeZoneOffset  *int
+	TeamId          string
+	GroupId         string
+	CollectionId    string
+	Permanent       bool
 }
 
 func ParamsFromRequest(r *http.Request) *Params {
@@ -167,6 +171,22 @@ func ParamsFromRequest(r *http.Request) *Params {
 
 	if val, err := strconv.Atoi(query.Get("timezone_offset")); err == nil {
 		params.TimeZoneOffset = &val
+	}
+
+	if val, ok := props["team_id"]; ok {
+		params.TeamId = val
+	}
+
+	if val, ok := props["group_id"]; ok {
+		params.GroupId = val
+	}
+
+	if val, ok := props["collection_id"]; ok {
+		params.CollectionId = val
+	}
+
+	if val, err := strconv.ParseBool(query.Get("permanent")); err == nil {
+		params.Permanent = val
 	}
 
 	return params

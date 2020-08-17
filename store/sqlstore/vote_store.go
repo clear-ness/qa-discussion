@@ -25,8 +25,8 @@ func NewSqlVoteStore(sqlStore store.Store) store.VoteStore {
 	return s
 }
 
-func (s *SqlVoteStore) GetVotesBeforeTime(time int64, userId string, page, perPage int, excludeFlag bool, getCount bool) ([]*model.Vote, int64, *model.AppError) {
-	queryString, args, err := s.getVotesBeforeTime(time, userId, page, perPage, excludeFlag, false).ToSql()
+func (s *SqlVoteStore) GetVotesBeforeTime(time int64, userId string, page, perPage int, excludeFlag bool, getCount bool, teamId string) ([]*model.Vote, int64, *model.AppError) {
+	queryString, args, err := s.getVotesBeforeTime(time, userId, page, perPage, excludeFlag, false, teamId).ToSql()
 	if err != nil {
 		return nil, int64(0), model.NewAppError("SqlPostStore.GetVotesBeforeTime", "store.sql_post.get_votes_before_time.get.app_error", nil, "", http.StatusInternalServerError)
 	}
@@ -40,7 +40,7 @@ func (s *SqlVoteStore) GetVotesBeforeTime(time int64, userId string, page, perPa
 	var totalCount int64
 
 	if getCount {
-		queryString, args, err = s.getVotesBeforeTime(time, userId, page, perPage, excludeFlag, true).ToSql()
+		queryString, args, err = s.getVotesBeforeTime(time, userId, page, perPage, excludeFlag, true, teamId).ToSql()
 		if err != nil {
 			return nil, int64(0), model.NewAppError("SqlVoteStore.GetVotesBeforeTime", "store.sql_vote.get_votes_before_time.get.app_error", nil, "", http.StatusInternalServerError)
 		}
@@ -54,7 +54,7 @@ func (s *SqlVoteStore) GetVotesBeforeTime(time int64, userId string, page, perPa
 	return votes, totalCount, nil
 }
 
-func (s *SqlVoteStore) getVotesBeforeTime(time int64, userId string, page, perPage int, excludeFlag bool, countQuery bool) sq.SelectBuilder {
+func (s *SqlVoteStore) getVotesBeforeTime(time int64, userId string, page, perPage int, excludeFlag bool, countQuery bool, teamId string) sq.SelectBuilder {
 	var selectStr string
 	if countQuery {
 		selectStr = "count(*)"
@@ -68,6 +68,15 @@ func (s *SqlVoteStore) getVotesBeforeTime(time int64, userId string, page, perPa
 			sq.Expr(`UserId = ?`, userId),
 			sq.Expr(`CreateAt <= ?`, time),
 		})
+
+	// TODO: 問題無い？
+	if teamId != "" {
+		query = query.Where(sq.And{
+			sq.Expr(`TeamId = ?`, teamId),
+		})
+	} else {
+		query = query.Where("TeamId IS NULL")
+	}
 
 	if excludeFlag {
 		query = query.Where(sq.And{

@@ -18,8 +18,11 @@ func (api *API) InitUser() {
 	api.BaseRoutes.Users.Handle("/login", api.ApiHandler(login)).Methods("POST")
 	api.BaseRoutes.Users.Handle("/logout", api.ApiHandler(logout)).Methods("POST")
 	api.BaseRoutes.Users.Handle("", api.ApiHandler(getUsers)).Methods("GET")
+	api.BaseRoutes.Users.Handle("/ids", api.ApiHandler(getUsersByIds)).Methods("POST")
 
 	api.BaseRoutes.User.Handle("", api.ApiHandler(getUser)).Methods("GET")
+	api.BaseRoutes.UserForTeam.Handle("", api.ApiSessionRequired(getTeamUser)).Methods("GET")
+
 	api.BaseRoutes.User.Handle("", api.ApiSessionRequired(updateUser)).Methods("PUT")
 	api.BaseRoutes.User.Handle("", api.ApiSessionRequired(deleteUser)).Methods("DELETE")
 
@@ -42,6 +45,9 @@ func (api *API) InitUser() {
 	api.BaseRoutes.VotesForUser.Handle("", api.ApiSessionRequired(getVotesForUser)).Methods("GET")
 
 	api.BaseRoutes.User.Handle("/image", api.ApiSessionRequired(setProfileImage)).Methods("POST")
+
+	// TODO: search users
+
 }
 
 func createUser(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -53,10 +59,31 @@ func createUser(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	user.SanitizeInput()
 
+	// 以下、いずれの場合もユーザー新規作成だけでなく、事前にチームにも参加させておく
+	//
+	// inviteUsersToTeamでemail link招待された場合
+	tokenId := r.URL.Query().Get("t")
+	// チームのlink共有されて 作成する場合 (teamのlinkを知ってさえいればいい)
+	inviteId := r.URL.Query().Get("iid")
+
 	var ruser *model.User
 	var err *model.AppError
 
-	ruser, err = c.App.CreateUserFromSignup(user)
+	if len(tokenId) > 0 {
+		var token *model.Token
+		token, err = c.App.Srv.Store.Token().GetByToken(tokenId)
+		if err != nil {
+			c.Err = model.NewAppError("CreateUserWithToken", "api.user.create_user.signup_link_invalid.app_error", nil, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		ruser, err = c.App.CreateUserWithToken(user, token)
+	} else if len(inviteId) > 0 {
+		ruser, err = c.App.CreateUserWithInviteId(user, inviteId)
+	} else {
+		ruser, err = c.App.CreateUserFromSignup(user)
+	}
+
 	if err != nil {
 		c.Err = err
 		return
@@ -160,19 +187,71 @@ func getUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	questionCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_QUESTION)
+	questionCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_QUESTION, "")
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
 		user.QuestionCount = questionCount
 	}
 
-	answerCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_ANSWER)
+	answerCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_ANSWER, "")
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
 		user.AnswerCount = answerCount
 	}
+
+	options := map[string]bool{}
+	options["email"] = false
+	user.SanitizeProfile(options)
+
+	w.Write([]byte(user.ToJson()))
+}
+
+func getTeamUser(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequireUserId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+		return
+	}
+
+	user, err := c.App.GetUser(c.Params.UserId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if user == nil {
+		c.SetInvalidParam("user_id")
+		return
+	}
+
+	member, err := c.App.GetTeamMember(c.Params.TeamId, user.Id)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	questionCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_QUESTION, member.TeamId)
+	if err != nil {
+		mlog.Error(err.Error())
+	} else {
+		user.QuestionCount = questionCount
+	}
+
+	answerCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_ANSWER, member.TeamId)
+	if err != nil {
+		mlog.Error(err.Error())
+	} else {
+		user.AnswerCount = answerCount
+	}
+
+	// TODO: memberを返す？getUsersも同様に考慮。
+	user.Points = member.Points
 
 	options := map[string]bool{}
 	options["email"] = false
@@ -217,6 +296,29 @@ func getUsers(c *Context, w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(model.UserListToJson(users)))
 }
 
+func getUsersByIds(c *Context, w http.ResponseWriter, r *http.Request) {
+	userIds := model.ArrayFromJson(r.Body)
+
+	if len(userIds) == 0 {
+		c.SetInvalidParam("user_ids")
+		return
+	}
+
+	users, err := c.App.GetUsers(userIds)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	options := map[string]bool{}
+	options["email"] = false
+	for _, user := range users {
+		user.SanitizeProfile(options)
+	}
+
+	w.Write([]byte(model.UserListToJson(users)))
+}
+
 func getInboxMessagesForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	c.RequireUserId()
 	if c.Err != nil {
@@ -230,9 +332,19 @@ func getInboxMessagesForUser(c *Context, w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	teamId := ""
+	if len(c.Params.TeamId) > 0 {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM) {
+			c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+			return
+		}
+
+		teamId = c.Params.TeamId
+	}
+
 	curTime := model.GetMillis()
 
-	messages, err := c.App.GetInboxMessagesForUserToDate(curTime, c.Params.UserId, c.Params.Page, c.Params.PerPage)
+	messages, err := c.App.GetInboxMessagesForUserToDate(curTime, c.Params.UserId, c.Params.Page, c.Params.PerPage, teamId)
 	if err != nil {
 		c.Err = err
 		return
@@ -254,12 +366,22 @@ func getUserPointHistoryForUser(c *Context, w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	teamId := ""
+	if len(c.Params.TeamId) > 0 {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM) {
+			c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+			return
+		}
+
+		teamId = c.Params.TeamId
+	}
+
 	toDate := model.GetMillis()
 	if c.Params.ToDate != 0 {
 		toDate = c.Params.ToDate
 	}
 
-	history, err := c.App.GetUserPointHistoryForUser(toDate, c.Params.UserId, c.Params.Page, c.Params.PerPage)
+	history, err := c.App.GetUserPointHistoryForUser(toDate, c.Params.UserId, c.Params.Page, c.Params.PerPage, teamId)
 	if err != nil {
 		c.Err = err
 		return
@@ -281,7 +403,17 @@ func getInboxMessagesUnreadCountForUser(c *Context, w http.ResponseWriter, r *ht
 		}
 	}
 
-	count, err := c.App.GetInboxMessagesUnreadCountForUser(c.Params.UserId)
+	teamId := ""
+	if len(c.Params.TeamId) > 0 {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM) {
+			c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+			return
+		}
+
+		teamId = c.Params.TeamId
+	}
+
+	count, err := c.App.GetInboxMessagesUnreadCountForUser(c.Params.UserId, teamId)
 	if err != nil {
 		c.Err = err
 		return
@@ -342,9 +474,18 @@ func getVotesForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	teamId := ""
+	if len(c.Params.TeamId) > 0 {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM) {
+			c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+			return
+		}
+		teamId = c.Params.TeamId
+	}
+
 	curTime := model.GetMillis()
 
-	votes, totalCount, err := c.App.GetVotesForUser(curTime, c.Params.UserId, c.Params.Page, c.Params.PerPage, true, true)
+	votes, totalCount, err := c.App.GetVotesForUser(curTime, c.Params.UserId, c.Params.Page, c.Params.PerPage, true, true, teamId)
 	if err != nil {
 		c.Err = err
 		return
@@ -354,6 +495,7 @@ func getVotesForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(data.ToJson()))
 }
 
+// TODO: suspendされてもteam内では動けるのが前提
 func suspendUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	c.RequireUserId().RequireSuspendSpanType()
 	if c.Err != nil {

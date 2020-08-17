@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
 	"github.com/clear-ness/qa-discussion/services/mail"
 )
@@ -172,4 +173,47 @@ func SendInboxMessagesDigestEmail(email, siteURL string, messageCount int64, con
 	}
 
 	return nil
+}
+
+// 宛先毎にTOKEN_TYPE_TEAM_INVITATIONでTokenをDBに保存し、メアド宛にsignup_user_completeを付与して送信する
+// TODO: メール送信(injection注意)
+func (a *App) SendInviteEmails(team *model.Team, senderName string, senderUserId string, invites []string, siteURL string) {
+	for _, invite := range invites {
+		if len(invite) > 0 {
+			//subject := utils.T("api.templates.invite_subject",
+			//    map[string]interface{}{"SenderName": senderName,
+			//        "TeamDisplayName": team.DisplayName,
+			//        "SiteName":        a.ClientConfig()["SiteName"]})
+
+			//bodyPage := a.newEmailTemplate("invite_body", model.DEFAULT_LOCALE)
+			//bodyPage.Props["SiteURL"] = siteURL
+			//bodyPage.Props["Title"] = utils.T("api.templates.invite_body.title")
+			//bodyPage.Html["Info"] = utils.TranslateAsHtml(utils.T, "api.templates.invite_body.info",
+			//    map[string]interface{}{"SenderName": senderName, "TeamDisplayName": team.DisplayName})
+			//bodyPage.Props["Button"] = utils.T("api.templates.invite_body.button")
+			//bodyPage.Html["ExtraInfo"] = utils.TranslateAsHtml(utils.T, "api.templates.invite_body.extra_info",
+			//    map[string]interface{}{"TeamDisplayName": team.DisplayName})
+			//bodyPage.Props["TeamURL"] = siteURL + "/" + team.Name
+
+			token := model.NewToken(
+				TOKEN_TYPE_TEAM_INVITATION,
+				model.MapToJson(map[string]string{"teamId": team.Id, "email": invite}),
+			)
+
+			//props := make(map[string]string)
+			//props["email"] = invite
+			//props["name"] = team.Name
+			//data := model.MapToJson(props)
+
+			if err := a.Srv.Store.Token().Save(token); err != nil {
+				mlog.Error("Failed to send invite email successfully ", mlog.Err(err))
+				continue
+			}
+			//bodyPage.Props["Link"] = fmt.Sprintf("%s/signup_user_complete/?d=%s&t=%s", siteURL, url.QueryEscape(data), url.QueryEscape(token.Token))
+
+			//if err := a.sendMail(invite, subject, bodyPage.Render()); err != nil {
+			//    mlog.Error("Failed to send invite email successfully ", mlog.Err(err))
+			//}
+		}
+	}
 }

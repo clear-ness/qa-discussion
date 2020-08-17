@@ -24,7 +24,7 @@ func NewSqlUserPointHistoryStore(sqlStore store.Store) store.UserPointHistorySto
 	return s
 }
 
-func (s *SqlUserPointHistoryStore) GetUserPointHistoryBeforeTime(time int64, userId string, page, perPage int) ([]*model.UserPointHistory, *model.AppError) {
+func (s *SqlUserPointHistoryStore) GetUserPointHistoryBeforeTime(time int64, userId string, page, perPage int, teamId string) ([]*model.UserPointHistory, *model.AppError) {
 	offset := page * perPage
 
 	query := s.GetQueryBuilder().Select("u.*")
@@ -33,6 +33,15 @@ func (s *SqlUserPointHistoryStore) GetUserPointHistoryBeforeTime(time int64, use
 			sq.Expr(`UserId = ?`, userId),
 			sq.Expr(`CreateAt <= ?`, time),
 		})
+
+	// TODO: 問題無い？
+	if teamId != "" {
+		query = query.Where(sq.And{
+			sq.Expr(`TeamId = ?`, teamId),
+		})
+	} else {
+		query = query.Where("TeamId IS NULL")
+	}
 
 	query = query.OrderBy("CreateAt DESC").
 		Limit(uint64(perPage)).

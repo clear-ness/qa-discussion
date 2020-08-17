@@ -102,7 +102,8 @@ func (job *EmailBatchingJob) emailBatchJob(inboxInterval string) {
 			}
 
 			var count int64
-			if count, err = job.server.Store.InboxMessage().GetInboxMessagesUnreadCount(user.Id, minDate); err != nil {
+			// TODO: teamを考慮
+			if count, err = job.server.Store.InboxMessage().GetInboxMessagesUnreadCount(user.Id, minDate, ""); err != nil {
 				continue
 			}
 			if count <= 0 {
@@ -110,7 +111,8 @@ func (job *EmailBatchingJob) emailBatchJob(inboxInterval string) {
 			}
 
 			var messages []*model.InboxMessage
-			if messages, err = job.server.Store.InboxMessage().GetInboxMessages(minDate, user.Id, ">", 0, 10); err != nil {
+			// TODO: teamを考慮
+			if messages, err = job.server.Store.InboxMessage().GetInboxMessages(minDate, user.Id, ">", 0, 10, ""); err != nil {
 				continue
 			}
 			if len(messages) <= 0 {

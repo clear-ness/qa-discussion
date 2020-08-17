@@ -3,6 +3,7 @@
 CREATE TABLE `UserPointHistory` (
   `Id` varchar(26) NOT NULL,
   `UserId` varchar(26) NOT NULL,
+  `TeamId` varchar(26) DEFAULT NULL,
   `Type` varchar(26) DEFAULT NULL,
   `Points` int(11) DEFAULT NULL,
   `CreateAt` bigint(20) DEFAULT NULL,

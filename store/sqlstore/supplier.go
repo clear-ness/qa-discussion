@@ -58,6 +58,11 @@ const (
 )
 
 type SqlSupplierStores struct {
+	team                store.TeamStore
+	teamMemberHistory   store.TeamMemberHistoryStore
+	group               store.GroupStore
+	groupMemberHistory  store.GroupMemberHistoryStore
+	collection          store.CollectionStore
 	user                store.UserStore
 	token               store.TokenStore
 	session             store.SessionStore
@@ -69,6 +74,7 @@ type SqlSupplierStores struct {
 	inboxMessage        store.InboxMessageStore
 	fileInfo            store.FileInfoStore
 	notificationSetting store.NotificationSettingStore
+	audit               store.AuditStore
 }
 
 type SqlSupplier struct {
@@ -88,6 +94,11 @@ func NewSqlSupplier(settings model.SqlSettings) *SqlSupplier {
 
 	supplier.initConnection()
 
+	supplier.stores.team = NewSqlTeamStore(supplier)
+	supplier.stores.teamMemberHistory = NewSqlTeamMemberHistoryStore(supplier)
+	supplier.stores.group = NewSqlGroupStore(supplier)
+	supplier.stores.groupMemberHistory = NewSqlGroupMemberHistoryStore(supplier)
+	supplier.stores.collection = NewSqlCollectionStore(supplier)
 	supplier.stores.user = NewSqlUserStore(supplier)
 	supplier.stores.token = NewSqlTokenStore(supplier)
 	supplier.stores.session = NewSqlSessionStore(supplier)
@@ -99,6 +110,7 @@ func NewSqlSupplier(settings model.SqlSettings) *SqlSupplier {
 	supplier.stores.inboxMessage = NewSqlInboxMessageStore(supplier)
 	supplier.stores.fileInfo = NewSqlFileInfoStore(supplier)
 	supplier.stores.notificationSetting = NewSqlNotificationSettingStore(supplier)
+	supplier.stores.audit = NewSqlAuditStore(supplier)
 
 	return supplier
 }
@@ -306,6 +318,26 @@ func (ss *SqlSupplier) DropAllTables() {
 	ss.master.TruncateTables()
 }
 
+func (ss *SqlSupplier) Team() store.TeamStore {
+	return ss.stores.team
+}
+
+func (ss *SqlSupplier) TeamMemberHistory() store.TeamMemberHistoryStore {
+	return ss.stores.teamMemberHistory
+}
+
+func (ss *SqlSupplier) Group() store.GroupStore {
+	return ss.stores.group
+}
+
+func (ss *SqlSupplier) GroupMemberHistory() store.GroupMemberHistoryStore {
+	return ss.stores.groupMemberHistory
+}
+
+func (ss *SqlSupplier) Collection() store.CollectionStore {
+	return ss.stores.collection
+}
+
 func (ss *SqlSupplier) User() store.UserStore {
 	return ss.stores.user
 }
@@ -348,6 +380,10 @@ func (ss *SqlSupplier) FileInfo() store.FileInfoStore {
 
 func (ss *SqlSupplier) NotificationSetting() store.NotificationSettingStore {
 	return ss.stores.notificationSetting
+}
+
+func (ss *SqlSupplier) Audit() store.AuditStore {
+	return ss.stores.audit
 }
 
 type JSONSerializable interface {

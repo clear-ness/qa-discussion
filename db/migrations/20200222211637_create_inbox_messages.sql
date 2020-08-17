@@ -10,6 +10,7 @@ CREATE TABLE `InboxMessages` (
   `Title` text,
   `AnswerId` varchar(26) NOT NULL,
   `CommentId` varchar(26) NOT NULL,
+  `TeamId` varchar(26) DEFAULT NULL,
   `CreateAt` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`Id`),
   KEY `idx_inbox_messages_user_id_create_at` (`UserId`,`CreateAt`)

@@ -1,5 +1,6 @@
 -- +goose Up
 -- SQL in this section is executed when the migration is applied.
+-- TODO: indexを全て再考慮
 CREATE TABLE `Posts` (
   `Id` varchar(26) NOT NULL,
   `Type` varchar(26) DEFAULT NULL,
@@ -8,6 +9,7 @@ CREATE TABLE `Posts` (
   `OriginalId` varchar(26) DEFAULT NULL,
   `BestId` varchar(26) DEFAULT NULL,
   `UserId` varchar(26) DEFAULT NULL,
+  `TeamId` varchar(26) DEFAULT NULL,
   `Title` text,
   `Content` text,
   `Tags` text,
@@ -37,6 +39,7 @@ CREATE TABLE `Posts` (
   FULLTEXT KEY `idx_posts_title_txt` (`Title`),
   FULLTEXT KEY `idx_posts_content_txt` (`Content`),
   FULLTEXT KEY `idx_posts_tags_txt` (`Tags`),
+  FULLTEXT KEY `idx_posts_title_tags_txt` (`Title`,`Tags`),
   FULLTEXT KEY `idx_posts_title_tags_content_txt` (`Title`,`Tags`,`Content`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

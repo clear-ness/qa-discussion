@@ -10,6 +10,7 @@ const (
 	INBOX_MESSAGE_TYPE_ANSWER        = "answer"
 	INBOX_MESSAGE_TYPE_COMMENT       = "comment"
 	INBOX_MESSAGE_TYPE_COMMENT_REPLY = "comment_reply"
+	INBOX_MESSAGE_TYPE_QUESTION      = "question"
 
 	INBOX_MESSAGE_CONTENT_MAX_LENGTH = 50
 )
@@ -24,6 +25,7 @@ type InboxMessage struct {
 	Title      string `db:"Title" json:"title"`
 	AnswerId   string `db:"AnswerId" json:"answer_id,omitempty"`
 	CommentId  string `db:"CommentId" json:"comment_id,omitempty"`
+	TeamId     string `db:"TeamId" json:"team_id"`
 	CreateAt   int64  `db:"CreateAt" json:"create_at"`
 
 	IsUnread bool `db:"-" json:"is_unread"`
@@ -62,6 +64,10 @@ func (o *InboxMessage) IsValid() *AppError {
 
 	if o.CommentId != "" && len(o.CommentId) != 26 {
 		return NewAppError("InboxMessage.IsValid", "model.inbox_message.is_valid.comment_id.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if o.TeamId != "" && len(o.TeamId) != 26 {
+		return NewAppError("InboxMessage.IsValid", "model.inbox_message.is_valid.team_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if o.CreateAt == 0 {

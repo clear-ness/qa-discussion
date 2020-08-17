@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
@@ -19,8 +20,10 @@ import (
 const (
 	TOKEN_TYPE_VERIFY_EMAIL      = "verify_email"
 	TOKEN_TYPE_PASSWORD_RECOVERY = "password_recovery"
+	TOKEN_TYPE_TEAM_INVITATION   = "team_invitation"
 
-	PASSWORD_RECOVER_EXPIRY_TIME = 1000 * 60 * 60 // 1 hour
+	PASSWORD_RECOVER_EXPIRY_TIME = 1000 * 60 * 60      // 1 hour
+	INVITATION_EXPIRY_TIME       = 1000 * 60 * 60 * 48 // 48 hours
 )
 
 func (a *App) CreateUserFromSignup(user *model.User) (*model.User, *model.AppError) {
@@ -151,6 +154,7 @@ func (a *App) GetUsers(userIds []string) ([]*model.User, *model.AppError) {
 	users, err := a.Srv.Store.User().GetByIds(userIds)
 	for _, user := range users {
 		user.ProfileImageLink = user.GetProfileImageLink(&a.Config().FileSettings)
+		// TODO: ここでsanitizeする様に
 	}
 	return users, err
 }
@@ -465,6 +469,8 @@ func (a *App) DeleteUser(userId string, sessionUserId string) *model.AppError {
 		return model.NewAppError("DeleteUser", "api.user.delete_admin.get.app_error", nil, "", http.StatusNotFound)
 	}
 
+	// TODO: teamに所属している場合、teamMemberやgroupMemberを削除
+
 	// normal users can self delete
 	if err := a.Srv.Store.User().Delete(userId, model.GetMillis(), sessionUserId); err != nil {
 		return err
@@ -533,4 +539,99 @@ func (a *App) SetProfileImageFromFile(userId string, file io.Reader) (string, *m
 	}
 
 	return (*a.Config().FileSettings.AmazonCloudFrontURL + path), nil
+}
+
+func (a *App) CreateUserWithToken(user *model.User, token *model.Token) (*model.User, *model.AppError) {
+	if token.Type != TOKEN_TYPE_TEAM_INVITATION {
+		return nil, model.NewAppError("CreateUserWithToken", "api.user.create_user.signup_link_invalid.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if model.GetMillis()-token.CreateAt >= INVITATION_EXPIRY_TIME {
+		a.DeleteToken(token)
+		return nil, model.NewAppError("CreateUserWithToken", "api.user.create_user.signup_link_expired.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	tokenData := model.MapFromJson(strings.NewReader(token.Extra))
+
+	team, err := a.Srv.Store.Team().Get(tokenData["teamId"])
+	if err != nil {
+		return nil, err
+	}
+
+	user.Email = tokenData["email"]
+	// Email経由が前提なので検証済みに。
+	// (allowed domainなメアドが検証出来たので)ここではCheckUserDomainする必要が無い。
+	user.EmailVerified = true
+	user.Points = 0
+
+	var ruser *model.User
+	if token.Type == TOKEN_TYPE_TEAM_INVITATION {
+		ruser, err = a.CreateNormalUser(user)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.JoinUserToTeam(team, ruser, ""); err != nil {
+		return nil, err
+	}
+
+	if err := a.DeleteToken(token); err != nil {
+		return nil, err
+	}
+
+	return ruser, nil
+}
+
+func (a *App) CreateUserWithInviteId(user *model.User, inviteId string) (*model.User, *model.AppError) {
+	team, err := a.Srv.Store.Team().GetByInviteId(inviteId)
+	if err != nil {
+		return nil, err
+	}
+
+	// allowed domainなメアドが検証出来て無いので
+	if !CheckUserDomain(user, team.AllowedDomains) {
+		return nil, model.NewAppError("CreateUserWithInviteId", "api.team.invite_members.invalid_email.app_error", map[string]interface{}{"Addresses": team.AllowedDomains}, "", http.StatusForbidden)
+	}
+	user.EmailVerified = false
+
+	ruser, err := a.CreateNormalUser(user)
+	if err != nil {
+		return nil, err
+	}
+
+	// 事前に新規ユーザーをチームに参加させておく
+	if err := a.JoinUserToTeam(team, ruser, ""); err != nil {
+		return nil, err
+	}
+
+	if err := a.SendWelcomeEmail(ruser.Id, ruser.Email, ruser.EmailVerified, a.GetSiteURL()); err != nil {
+		mlog.Error("Failed to send welcome email on create user with inviteId", mlog.Err(err))
+	}
+
+	return ruser, nil
+}
+
+func CheckEmailDomain(email string, domains string) bool {
+	if len(domains) == 0 {
+		return true
+	}
+
+	domainArray := strings.Fields(strings.TrimSpace(strings.ToLower(strings.Replace(strings.Replace(domains, "@", " ", -1), ",", " ", -1))))
+
+	for _, d := range domainArray {
+		if strings.HasSuffix(strings.ToLower(email), "@"+d) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func CheckUserDomain(user *model.User, domains string) bool {
+	return CheckEmailDomain(user.Email, domains)
 }

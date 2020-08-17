@@ -32,6 +32,7 @@ const (
 
 type UserPointHistory struct {
 	Id       string `db:"Id, primarykey" json:"id"`
+	TeamId   string `db:"TeamId" json:"team_id"`
 	UserId   string `db:"UserId" json:"user_id"`
 	Type     string `db:"Type" json:"type"`
 	Points   int    `db:"Points" json:"points"`

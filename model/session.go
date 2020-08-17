@@ -10,12 +10,13 @@ const (
 )
 
 type Session struct {
-	Id        string    `db:"Id, primarykey" json:"id"`
-	Token     string    `db:"Token" json:"token"`
-	CreateAt  int64     `db:"CreateAt" json:"create_at"`
-	ExpiresAt int64     `db:"ExpiresAt" json:"expires_at"`
-	UserId    string    `db:"UserId" json:"user_id"`
-	Props     StringMap `db:"Props" json:"props"`
+	Id          string        `db:"Id, primarykey" json:"id"`
+	Token       string        `db:"Token" json:"token"`
+	CreateAt    int64         `db:"CreateAt" json:"create_at"`
+	ExpiresAt   int64         `db:"ExpiresAt" json:"expires_at"`
+	UserId      string        `db:"UserId" json:"user_id"`
+	Props       StringMap     `db:"Props" json:"props"`
+	TeamMembers []*TeamMember `json:"team_members" db:"-"`
 }
 
 func (me *Session) PreSave() {
@@ -60,6 +61,16 @@ func (me *Session) AddProp(key string, value string) {
 	}
 
 	me.Props[key] = value
+}
+
+func (me *Session) GetTeamByTeamId(teamId string) *TeamMember {
+	for _, team := range me.TeamMembers {
+		if team.TeamId == teamId {
+			return team
+		}
+	}
+
+	return nil
 }
 
 func (me *Session) GenerateCSRF() string {

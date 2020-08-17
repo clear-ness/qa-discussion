@@ -33,6 +33,8 @@ const (
 	USER_PROPS_DELETE_BY  = "deleteBy"
 )
 
+// TODO: user's views count:
+// The number of unique visitors to user profile.
 type User struct {
 	Id                     string    `db:"Id, primarykey" json:"id"`
 	Type                   string    `db:"Type" json:"type"`

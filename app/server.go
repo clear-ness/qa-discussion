@@ -12,16 +12,19 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/cors"
 
+	"github.com/clear-ness/qa-discussion/cachelayer"
 	"github.com/clear-ness/qa-discussion/config"
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
+	"github.com/clear-ness/qa-discussion/searchlayer"
 	"github.com/clear-ness/qa-discussion/store"
 	"github.com/clear-ness/qa-discussion/store/sqlstore"
 	"github.com/clear-ness/qa-discussion/utils"
 )
 
 type Server struct {
-	Store store.Store
+	sqlStore store.Store
+	Store    store.Store
 
 	RootRouter *mux.Router
 	Router     *mux.Router
@@ -35,7 +38,8 @@ type Server struct {
 	goroutineCount      int32
 	goroutineExitSignal chan struct{}
 
-	newStore func() store.Store
+	newSqlStore func() store.Store
+	newStore    func() store.Store
 
 	configStore config.Store
 
@@ -62,6 +66,8 @@ func NewServer(options ...Option) (*Server, error) {
 	}
 
 	for _, option := range options {
+		// テストの場合はnewStoreがセットされる
+		// バッチの場合はEmailBatchingJobがセットされる
 		if err := option(s); err != nil {
 			return nil, errors.Wrap(err, "failed to apply option")
 		}
@@ -77,9 +83,26 @@ func NewServer(options ...Option) (*Server, error) {
 	//    return nil, errors.Wrapf(err, "unable to load translation files")
 	//}
 
+	if s.newSqlStore == nil {
+		s.newSqlStore = func() store.Store {
+			return sqlstore.NewSqlSupplier(s.Config().SqlSettings)
+		}
+	}
+	s.sqlStore = s.newSqlStore()
+
 	if s.newStore == nil {
 		s.newStore = func() store.Store {
-			return sqlstore.NewSqlSupplier(s.Config().SqlSettings)
+			searchLayer := searchlayer.NewSearchLayer(
+				cachelayer.NewCacheLayer(
+					s.sqlStore,
+					s.Config(),
+				),
+				s.Config(),
+			)
+
+			searchLayer.SetupIndexes()
+
+			return searchlayer
 		}
 	}
 	s.Store = s.newStore()

@@ -6,8 +6,8 @@ import (
 	"github.com/clear-ness/qa-discussion/model"
 )
 
-func (a *App) GetVotesForUser(toDate int64, userId string, page, perPage int, excludeFlag bool, limitContent bool) ([]*model.VoteWithPost, int64, *model.AppError) {
-	votes, totalCount, err := a.Srv.Store.Vote().GetVotesBeforeTime(toDate, userId, page, perPage, excludeFlag, true)
+func (a *App) GetVotesForUser(toDate int64, userId string, page, perPage int, excludeFlag bool, limitContent bool, teamId string) ([]*model.VoteWithPost, int64, *model.AppError) {
+	votes, totalCount, err := a.Srv.Store.Vote().GetVotesBeforeTime(toDate, userId, page, perPage, excludeFlag, true, teamId)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -66,5 +66,7 @@ func (a *App) GetVotesForUser(toDate int64, userId string, page, perPage int, ex
 }
 
 func (a *App) GetVote(userId string, postId string, voteType string) (*model.Vote, *model.AppError) {
+	// TODO: teamIdの指定は不要？
+	// インデックスの影響で必要そう..
 	return a.Srv.Store.Vote().GetByPostIdForUser(userId, postId, voteType)
 }

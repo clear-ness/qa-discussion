@@ -9,6 +9,7 @@ import (
 type UserFavoritePost struct {
 	PostId   string `db:"PostId" json:"post_id"`
 	UserId   string `db:"UserId" json:"user_id"`
+	TeamId   string `db:"TeamId" json:"team_id"`
 	CreateAt int64  `db:"CreateAt" json:"create_at"`
 }
 
@@ -25,6 +26,10 @@ func (u *UserFavoritePost) IsValid() *AppError {
 
 	if len(u.UserId) != 26 {
 		return NewAppError("UserFavoritePost.IsValid", "model.user_favorite_post.is_valid.user_id.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if u.TeamId != "" && len(u.TeamId) != 26 {
+		return NewAppError("UserFavoritePost.IsValid", "model.user_favorite_post.is_valid.team_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if u.CreateAt == 0 {

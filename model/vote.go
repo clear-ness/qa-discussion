@@ -16,6 +16,7 @@ type Vote struct {
 	PostId   string `db:"PostId" json:"post_id"`
 	UserId   string `db:"UserId" json:"user_id"`
 	Type     string `db:"Type" json:"type"`
+	TeamId   string `db:"TeamId" json:"team_id"`
 	CreateAt int64  `db:"CreateAt" json:"create_at"`
 }
 

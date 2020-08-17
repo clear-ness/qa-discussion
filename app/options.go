@@ -12,13 +12,13 @@ func StoreOverride(override interface{}) Option {
 	return func(s *Server) error {
 		switch o := override.(type) {
 		case store.Store:
-			s.newStore = func() store.Store {
+			s.newSqlStore = func() store.Store {
 				return o
 			}
 			return nil
 
 		case func(*Server) store.Store:
-			s.newStore = func() store.Store {
+			s.newSqlStore = func() store.Store {
 				return o(s)
 			}
 			return nil

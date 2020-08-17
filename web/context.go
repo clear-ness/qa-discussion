@@ -188,3 +188,39 @@ func (c *Context) RequireFileId() *Context {
 
 	return c
 }
+
+func (c *Context) RequireTeamId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.TeamId) != 26 {
+		c.SetInvalidUrlParam("team_id")
+	}
+
+	return c
+}
+
+func (c *Context) RequireGroupId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.GroupId) != 26 {
+		c.SetInvalidUrlParam("group_id")
+	}
+
+	return c
+}
+
+func (c *Context) RequireCollectionId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.CollectionId) != 26 {
+		c.SetInvalidUrlParam("collection_id")
+	}
+
+	return c
+}

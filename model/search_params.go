@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	TERMS_TYPE_PLAIN = "plain_terms"
-	TERMS_TYPE_TITLE = "title_terms"
-	TERMS_TYPE_TAG   = "tag_terms"
-	TERMS_TYPE_BODY  = "body_terms"
+	TERMS_TYPE_PLAIN   = "plain_terms"
+	TERMS_TYPE_TITLE   = "title_terms"
+	TERMS_TYPE_TAG     = "tag_terms"
+	TERMS_TYPE_BODY    = "body_terms"
+	TERMS_TYPE_SIMILAR = "similar_terms"
+	TERMS_TYPE_LINK    = "link_terms"
 )
 
 type SearchParams struct {

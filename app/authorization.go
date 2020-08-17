@@ -56,3 +56,85 @@ func (a *App) SessionHasPermissionToUser(session model.Session, userId string) b
 
 	return false
 }
+
+// チームはシステム全体とは影響を別にしたい
+// ので、権限の検証はチーム内でしかしない。
+// TODO: system adminは別？
+func (a *App) SessionHasPermissionToTeam(session model.Session, teamId string, permission *model.Permission) bool {
+	if teamId == "" {
+		return false
+	}
+
+	teamMember := session.GetTeamByTeamId(teamId)
+	if teamMember != nil {
+		if a.TeamMemberHasPermissionTo(teamMember.Type, permission) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (a *App) TeamMemberHasPermissionTo(memberType string, permission *model.Permission) bool {
+	var permissions []string
+	switch memberType {
+	case model.TEAM_MEMBER_TYPE_NORMAL:
+		permissions = model.ROLE_TEAM_MEMBER_TYPE_NORMAL.Permissions
+	case model.TEAM_MEMBER_TYPE_ADMIN:
+		permissions = model.ROLE_TEAM_MEMBER_TYPE_ADMIN.Permissions
+	default:
+		return false
+	}
+
+	for _, allowedPermission := range permissions {
+		if allowedPermission == permission.Id {
+			return true
+		}
+	}
+
+	return false
+}
+
+// グループはチームに依存する概念のため、
+// グループ → チーム の順に権限を検証する
+func (a *App) SessionHasPermissionToGroup(session model.Session, groupId string, permission *model.Permission) bool {
+	if groupId == "" {
+		return false
+	}
+
+	memberTypes, err := a.Srv.Store.Group().GetAllGroupMembersForUser(session.UserId)
+	if err == nil {
+		if memberType, ok := memberTypes[groupId]; ok {
+			if a.GroupMemberHasPermissionTo(memberType, permission) {
+				return true
+			}
+		}
+	}
+
+	group, err := a.GetGroup(groupId)
+	if err == nil && group.TeamId != "" {
+		return a.SessionHasPermissionToTeam(session, group.TeamId, permission)
+	}
+
+	return false
+}
+
+func (a *App) GroupMemberHasPermissionTo(memberType string, permission *model.Permission) bool {
+	var permissions []string
+	switch memberType {
+	case model.GROUP_MEMBER_TYPE_NORMAL:
+		permissions = model.ROLE_GROUP_MEMBER_TYPE_NORMAL.Permissions
+	case model.GROUP_MEMBER_TYPE_ADMIN:
+		permissions = model.ROLE_GROUP_MEMBER_TYPE_ADMIN.Permissions
+	default:
+		return false
+	}
+
+	for _, allowedPermission := range permissions {
+		if allowedPermission == permission.Id {
+			return true
+		}
+	}
+
+	return false
+}

@@ -16,6 +16,7 @@ const (
 )
 
 func (api *API) InitFile() {
+	// TODO: teamを考慮
 	api.BaseRoutes.Files.Handle("", api.ApiSessionRequired(uploadFileStream)).Methods("POST")
 
 	api.BaseRoutes.File.Handle("/info", api.ApiHandler(getFileInfo)).Methods("GET")

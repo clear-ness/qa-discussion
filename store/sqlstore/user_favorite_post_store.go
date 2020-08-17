@@ -53,8 +53,8 @@ func (s *SqlUserFavoritePostStore) GetCountByPostId(postId string) (int64, *mode
 	return count, nil
 }
 
-func (s *SqlUserFavoritePostStore) GetUserFavoritePostsBeforeTime(time int64, userId string, page, perPage int, getCount bool) ([]*model.UserFavoritePost, int64, *model.AppError) {
-	queryString, args, err := s.getUserFavoritePostsBeforeTime(time, userId, page, perPage, false).ToSql()
+func (s *SqlUserFavoritePostStore) GetUserFavoritePostsBeforeTime(time int64, userId string, page, perPage int, getCount bool, teamId string) ([]*model.UserFavoritePost, int64, *model.AppError) {
+	queryString, args, err := s.getUserFavoritePostsBeforeTime(time, userId, page, perPage, false, teamId).ToSql()
 	if err != nil {
 		return nil, int64(0), model.NewAppError("SqlUserFavoritePostStore.GetUserFavoritePostsBeforeTime", "store.sql_user_favorite_post.get_user_favorite_posts_before_time.get.app_error", nil, "", http.StatusInternalServerError)
 	}
@@ -67,7 +67,7 @@ func (s *SqlUserFavoritePostStore) GetUserFavoritePostsBeforeTime(time int64, us
 	var totalCount int64
 
 	if getCount {
-		queryString, args, err = s.getUserFavoritePostsBeforeTime(time, userId, page, perPage, true).ToSql()
+		queryString, args, err = s.getUserFavoritePostsBeforeTime(time, userId, page, perPage, true, teamId).ToSql()
 		if err != nil {
 			return nil, int64(0), model.NewAppError("SqlUserFavoritePostStore.GetUserFavoritePostsBeforeTime", "store.sql_user_favorite_post.get_user_favorite_posts_before_time.get.app_error", nil, "", http.StatusInternalServerError)
 		}
@@ -81,7 +81,7 @@ func (s *SqlUserFavoritePostStore) GetUserFavoritePostsBeforeTime(time int64, us
 	return favoritePosts, totalCount, nil
 }
 
-func (s *SqlUserFavoritePostStore) getUserFavoritePostsBeforeTime(time int64, userId string, page, perPage int, countQuery bool) sq.SelectBuilder {
+func (s *SqlUserFavoritePostStore) getUserFavoritePostsBeforeTime(time int64, userId string, page, perPage int, countQuery bool, teamId string) sq.SelectBuilder {
 	var selectStr string
 	if countQuery {
 		selectStr = "count(*)"
@@ -96,6 +96,11 @@ func (s *SqlUserFavoritePostStore) getUserFavoritePostsBeforeTime(time int64, us
 			sq.Expr(`CreateAt <= ?`, time),
 		})
 
+	// TODO: teamIdが""の場合は問題無い？
+	query = query.Where(sq.And{
+		sq.Expr(`TeamId = ?`, teamId),
+	})
+
 	if !countQuery {
 		offset := page * perPage
 		query = query.OrderBy("CreateAt DESC").
@@ -106,10 +111,11 @@ func (s *SqlUserFavoritePostStore) getUserFavoritePostsBeforeTime(time int64, us
 	return query
 }
 
-func (s *SqlUserFavoritePostStore) Save(postId string, userId string) *model.AppError {
+func (s *SqlUserFavoritePostStore) Save(postId string, userId string, teamId string) *model.AppError {
 	favoritePost := &model.UserFavoritePost{
 		PostId: postId,
 		UserId: userId,
+		TeamId: teamId,
 	}
 
 	favoritePost.PreSave()

@@ -18,7 +18,7 @@ func NewSqlTagStore(sqlStore store.Store) store.TagStore {
 	}
 
 	for _, db := range sqlStore.GetAllConns() {
-		db.AddTableWithName(model.Tag{}, "Tags").SetKeys(false, "Content")
+		db.AddTableWithName(model.Tag{}, "Tags").SetKeys(false, "Content", "TeamId")
 	}
 
 	return s
@@ -35,6 +35,11 @@ func (s *SqlTagStore) GetTags(options *model.GetTagsOptions) (model.Tags, *model
 		prefix := options.InName
 		query = query.Where("Content LIKE ?", prefix+"%")
 	}
+
+	// TODO: teamIdが""の場合は問題無い？
+	query = query.Where(sq.And{
+		sq.Expr(`TeamId = ?`, options.TeamId),
+	})
 
 	if options.SortType == model.POST_SORT_TYPE_POPULAR && options.Min != nil {
 		query = query.Where(sq.And{

@@ -8,9 +8,11 @@ require (
 	github.com/aws/aws-sdk-go v1.29.16
 	github.com/cosiner/argv v0.0.1 // indirect
 	github.com/disintegration/imaging v1.6.2
+	github.com/elastic/go-elasticsearch/v8 v8.0.0-20200728144331-527225d8e836
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/go-delve/delve v1.4.1 // indirect
 	github.com/go-gorp/gorp v2.2.0+incompatible
+	github.com/go-redis/redis/v8 v8.0.0-beta.7
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gorilla/mux v1.7.3
 	github.com/jasonlvhit/gocron v0.0.0-20191228163020-98b59b546dee
@@ -31,7 +33,7 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spf13/viper v1.3.2
 	github.com/stretchr/objx v0.1.1 // indirect
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.6.1
 	github.com/throttled/throttled v2.2.4+incompatible
 	github.com/ziutek/mymysql v1.5.4 // indirect
 	go.starlark.net v0.0.0-20191227232015-caa3e9aa5008 // indirect

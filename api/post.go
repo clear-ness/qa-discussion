@@ -7,20 +7,40 @@ import (
 )
 
 func (api *API) InitPost() {
+	// GUIの左サイドバーで特定Teamを選んだ状態で「private ask」すると、
+	// そのteamに紐づくプライベートなpostとなる。
+	// Team無選択状態でaskした場合は、teamに紐付かない。teamに紐づくpostは常にプライベート。
+	// teamのメンバー以外はteam全体にaskする事は出来ないし、teamに紐づくpostを一切CRUD出来ない。
+	// teamのメンバーなら(groupでなく)team全体、
+	// または private groupにもask出来る。(結局teamに紐づく)
+	// https://www.stackoverflow.help/support/solutions/articles/36000213146-manage-user-groups
+	//
+	// 左サイドバーのTeam無選択状態でpublic teamかつpublic groupにaskした場合
+	// (つまりr.body.post.teamIdが無いがc.Params.groupIdが存在する場合)、
+	// public group内ユーザーへのinboxMessageが作成される。(inboxMessageはgroup.teamIdに紐づく)
+	// それらの投稿はteamに紐付かない、groupはあくまでも通知目的。
 	api.BaseRoutes.Posts.Handle("/question", api.ApiSessionRequired(createQuestionPost)).Methods("POST")
 	api.BaseRoutes.Posts.Handle("/answer", api.ApiSessionRequired(createAnswerPost)).Methods("POST")
 	api.BaseRoutes.Posts.Handle("/comment", api.ApiSessionRequired(createCommentPost)).Methods("POST")
 
 	// with no comments, with authors
 	api.BaseRoutes.Posts.Handle("/questions", api.ApiHandler(getQuestions)).Methods("POST")
+	api.BaseRoutes.PostsForTeam.Handle("/questions", api.ApiSessionRequired(getQuestionsForTeam)).Methods("POST")
 
 	api.BaseRoutes.Post.Handle("/answers", api.ApiHandler(getAnswersForPost)).Methods("GET")
+	api.BaseRoutes.PostForTeam.Handle("/answers", api.ApiSessionRequired(getAnswersForTeamPost)).Methods("GET")
 
 	api.BaseRoutes.Post.Handle("", api.ApiHandler(getPost)).Methods("GET")
+	api.BaseRoutes.PostForTeam.Handle("", api.ApiSessionRequired(getTeamPost)).Methods("GET")
+
+	api.BaseRoutes.Post.Handle("", api.ApiHandler(viewPost)).Methods("POST")
 
 	api.BaseRoutes.Post.Handle("/comments", api.ApiHandler(getCommentsForPost)).Methods("GET")
+	api.BaseRoutes.PostForTeam.Handle("/comments", api.ApiSessionRequired(getCommentsForTeamPost)).Methods("GET")
 
-	api.BaseRoutes.Post.Handle("", api.ApiSessionRequired(updatePost)).Methods("PUT")
+	api.BaseRoutes.Post.Handle("/linked", api.ApiHandler(getLinkedForPost)).Methods("GET")
+	api.BaseRoutes.PostForTeam.Handle("/linked", api.ApiSessionRequired(getLinkedForTeamPost)).Methods("GET")
+
 	api.BaseRoutes.Post.Handle("", api.ApiSessionRequired(deletePost)).Methods("DELETE")
 
 	api.BaseRoutes.Post.Handle("/best", api.ApiSessionRequired(selectBestAnswer)).Methods("POST")
@@ -34,10 +54,28 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Post.Handle("/cancel_flag", api.ApiSessionRequired(cancelFlagPost)).Methods("POST")
 
 	api.BaseRoutes.Posts.Handle("/search", api.ApiHandler(searchPosts)).Methods("POST")
+	api.BaseRoutes.PostsForTeam.Handle("/search", api.ApiSessionRequired(searchPostsForTeam)).Methods("POST")
+
 	api.BaseRoutes.Posts.Handle("/advanced_search", api.ApiHandler(advancedSearchPosts)).Methods("POST")
+	api.BaseRoutes.PostsForTeam.Handle("/advanced_search", api.ApiSessionRequired(advancedSearchPostsForTeam)).Methods("POST")
+
+	api.BaseRoutes.Posts.Handle("/similar", api.ApiHandler(similarPosts)).Methods("POST")
+	api.BaseRoutes.PostsForTeam.Handle("/similar", api.ApiSessionRequired(similarPostsForTeam)).Methods("POST")
+
+	// TODO: related
+	// similarに近いが、アルゴリズムは非公開かつ可変らしい。
+	// → ElasticSearch のmore like this queryで実装
+	// https://meta.stackexchange.com/questions/20473/how-are-related-questions-selected
+
+	// TODO: Hot
+	// questions with the most views, answers, and votes over the last few days, or a week, or a month
+	// https://meta.stackexchange.com/questions/11602/what-formula-should-be-used-to-determine-hot-questions
 
 	api.BaseRoutes.PostsForUser.Handle("/questions", api.ApiHandler(getQuestionsForUser)).Methods("GET")
+	api.BaseRoutes.TeamForUser.Handle("/questions", api.ApiSessionRequired(getQuestionsForTeamUser)).Methods("GET")
+
 	api.BaseRoutes.PostsForUser.Handle("/answers", api.ApiHandler(getAnswersForUser)).Methods("GET")
+	api.BaseRoutes.TeamForUser.Handle("/answers", api.ApiSessionRequired(getAnswersForTeamUser)).Methods("GET")
 
 	// Moderators can lock quesions/answers.
 	// Locked quesions/answers cannot be voted on or changed in any way.
@@ -65,6 +103,31 @@ func getQuestions(c *Context, w http.ResponseWriter, r *http.Request) {
 	getPosts(c, w, r, options, false, false, false, true)
 }
 
+func getQuestionsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION, TeamId: c.Params.TeamId}
+
+	if c.Params.NoAnswers {
+		options.NoAnswers = true
+	}
+
+	m := model.MapFromJson(r.Body)
+	if len(m["tagged"]) > 0 {
+		options.Tagged = m["tagged"]
+	}
+
+	getPosts(c, w, r, options, false, false, false, true)
+}
+
 func getAnswersForPost(c *Context, w http.ResponseWriter, r *http.Request) {
 	c.RequirePostId()
 	if c.Err != nil {
@@ -72,6 +135,21 @@ func getAnswersForPost(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	options := &model.GetPostsOptions{PostType: model.POST_TYPE_ANSWER, ParentId: c.Params.PostId}
+	getPosts(c, w, r, options, true, false, true, false)
+}
+
+func getAnswersForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_ANSWER, ParentId: c.Params.PostId, TeamId: c.Params.TeamId}
 	getPosts(c, w, r, options, true, false, true, false)
 }
 
@@ -83,6 +161,52 @@ func getCommentsForPost(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	options := &model.GetPostsOptions{PostType: model.POST_TYPE_COMMENT, ParentId: c.Params.PostId}
 	getPosts(c, w, r, options, false, false, false, false)
+}
+
+func getCommentsForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_COMMENT, ParentId: c.Params.PostId, TeamId: c.Params.TeamId}
+	getPosts(c, w, r, options, false, false, false, false)
+}
+
+func getLinkedForPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION}
+
+	link := model.GetLink(c.App.GetSiteURL(), c.Params.PostId)
+	options.Link = link
+	getPosts(c, w, r, options, false, false, false, true)
+}
+
+func getLinkedForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION, TeamId: c.Params.TeamId}
+
+	link := model.GetLink(c.App.GetSiteURL(), c.Params.PostId)
+	options.Link = link
+	getPosts(c, w, r, options, false, false, false, true)
 }
 
 func getPosts(c *Context, w http.ResponseWriter, r *http.Request, options *model.GetPostsOptions, getComments bool, getParent bool, checkVoted bool, limitContent bool) {
@@ -98,8 +222,10 @@ func getPosts(c *Context, w http.ResponseWriter, r *http.Request, options *model
 
 	sort := c.Params.SortType
 	if len(sort) > 0 && sort != model.POST_SORT_TYPE_CREATION && sort != model.POST_SORT_TYPE_ACTIVE && sort != model.POST_SORT_TYPE_VOTES && sort != model.POST_SORT_TYPE_ANSWERS {
-		c.SetInvalidUrlParam("sort")
-		return
+		if sort != model.POST_SORT_TYPE_RELEVANCE || (sort == model.POST_SORT_TYPE_RELEVANCE && len(options.Title) <= 0) {
+			c.SetInvalidUrlParam("sort")
+			return
+		}
 	}
 	if sort == model.POST_SORT_TYPE_ANSWERS && options.PostType != model.POST_TYPE_QUESTION {
 		c.SetInvalidUrlParam("sort")
@@ -149,7 +275,66 @@ func getPost(c *Context, w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(post.ToJson()))
 }
 
+func getTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	post, err := c.App.GetPost(c.Params.PostId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	w.Write([]byte(post.ToJson()))
+}
+
+func viewPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	// TODO: このAPI自体がconfig.cacheEnableがtrueである前提。
+	// そうで無ければ弾く。
+
+	c.RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	post, err := c.App.GetPost(c.Params.PostId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if post.Type != model.POST_TYPE_QUESTION {
+		c.SetInvalidParam("post")
+		return
+	}
+
+	userId := ""
+	ipAddress := ""
+	if len(c.App.Session.UserId) == 0 {
+		ipAddress = c.App.IpAddress
+	} else {
+		userId = c.App.Session.UserId
+	}
+
+	c.App.ViewPost(post, userId, ipAddress)
+}
+
 func createQuestionPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	// 自分が所属するteamIdがある場合、private askの場合であり、postはチームに紐付く。
+	// さらにgroupIdがある場合、(private or public) groupユーザー達に対してinboxを作成。
+	// (private groupに対しての場合、自分が所属するteamに紐付くgroupIdである事が前提)
+	// groupIdが無い場合、inboxは作成され無い。
+	//
+	// 自分が所属するteamIdが無い場合、public askの場合であり、postはチームに紐付か無い。
+	// さらにgroupIdがある場合、(public) groupユーザー達に対してinboxを作成。
+	// groupIdが無い場合、inboxは作成され無い。最も一般的なケース。
 	post := model.PostFromJson(r.Body)
 	if post == nil {
 		c.SetInvalidParam("post")
@@ -158,12 +343,62 @@ func createQuestionPost(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	post.UserId = c.App.Session.UserId
 
-	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
-		c.SetPermissionError(model.PERMISSION_CREATE_POST)
-		return
+	var group *model.Group
+
+	if len(post.TeamId) == 26 {
+		// private askの場合
+		team, err := c.App.GetTeam(post.TeamId)
+		if err != nil {
+			c.Err = err
+			return
+		}
+
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, team.Id, model.PERMISSION_CREATE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_CREATE_TEAM_POST)
+			return
+		}
+
+		if len(c.Params.GroupId) == 26 {
+			group, err = c.App.GetGroup(c.Params.GroupId)
+			if err != nil {
+				c.Err = err
+				return
+			}
+
+			if group.TeamId != team.Id {
+				c.SetInvalidParam("group_id")
+				return
+			}
+		}
+	} else {
+		// public askの場合
+		post.TeamId = ""
+
+		if len(c.Params.GroupId) == 26 {
+			group, err := c.App.GetGroup(c.Params.GroupId)
+			if err != nil {
+				c.Err = err
+				return
+			}
+
+			team, err := c.App.GetTeam(group.TeamId)
+			if err != nil {
+				c.Err = err
+				return
+			}
+
+			if !(team.Type == model.TEAM_TYPE_PUBLIC && group.Type == model.GROUP_TYPE_PUBLIC) && !c.App.SessionHasPermissionToTeam(c.App.Session, group.TeamId, model.PERMISSION_CREATE_TEAM_POST) {
+				c.SetPermissionError(model.PERMISSION_CREATE_TEAM_POST)
+				return
+			}
+		} else if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
+			// 最も一般的なケース
+			c.SetPermissionError(model.PERMISSION_CREATE_POST)
+			return
+		}
 	}
 
-	rp, err := c.App.CreateQuestion(post)
+	rp, err := c.App.CreateQuestion(post, group)
 	if err != nil {
 		c.Err = err
 		return
@@ -182,9 +417,24 @@ func createAnswerPost(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	post.UserId = c.App.Session.UserId
 
-	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
-		c.SetPermissionError(model.PERMISSION_CREATE_POST)
-		return
+	if len(post.TeamId) == 26 {
+		team, err := c.App.GetTeam(post.TeamId)
+		if err != nil {
+			c.Err = err
+			return
+		}
+
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, team.Id, model.PERMISSION_CREATE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_CREATE_TEAM_POST)
+			return
+		}
+	} else {
+		post.TeamId = ""
+
+		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
+			c.SetPermissionError(model.PERMISSION_CREATE_POST)
+			return
+		}
 	}
 
 	rp, err := c.App.CreateAnswer(post)
@@ -206,9 +456,24 @@ func createCommentPost(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	post.UserId = c.App.Session.UserId
 
-	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
-		c.SetPermissionError(model.PERMISSION_CREATE_POST)
-		return
+	if len(post.TeamId) == 26 {
+		team, err := c.App.GetTeam(post.TeamId)
+		if err != nil {
+			c.Err = err
+			return
+		}
+
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, team.Id, model.PERMISSION_CREATE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_CREATE_TEAM_POST)
+			return
+		}
+	} else {
+		post.TeamId = ""
+
+		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_POST) {
+			c.SetPermissionError(model.PERMISSION_CREATE_POST)
+			return
+		}
 	}
 
 	rp, err := c.App.CreateComment(post)
@@ -239,25 +504,41 @@ func updatePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_EDIT_POST) {
-		c.SetPermissionError(model.PERMISSION_EDIT_POST)
-		return
-	}
-
 	originalPost, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_EDIT_POST)
 		return
 	}
 
-	if c.App.Session.UserId != originalPost.UserId {
-		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_EDIT_OTHERS_POSTS) {
-			c.SetPermissionError(model.PERMISSION_EDIT_OTHERS_POSTS)
+	if originalPost.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, originalPost.TeamId, model.PERMISSION_EDIT_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_EDIT_TEAM_POST)
+			return
+		}
+	} else {
+		post.TeamId = ""
+
+		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_EDIT_POST) {
+			c.SetPermissionError(model.PERMISSION_EDIT_POST)
 			return
 		}
 	}
 
-	if originalPost.IsLocked() {
+	if c.App.Session.UserId != originalPost.UserId {
+		if originalPost.TeamId != "" {
+			if !c.App.SessionHasPermissionToTeam(c.App.Session, originalPost.TeamId, model.PERMISSION_EDIT_OTHERS_TEAM_POSTS) {
+				c.SetPermissionError(model.PERMISSION_EDIT_OTHERS_TEAM_POSTS)
+				return
+			}
+		} else {
+			if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_EDIT_OTHERS_POSTS) {
+				c.SetPermissionError(model.PERMISSION_EDIT_OTHERS_POSTS)
+				return
+			}
+		}
+	}
+
+	if originalPost.TeamId == "" && originalPost.IsLocked() {
 		c.SetPermissionError(model.PERMISSION_EDIT_POST)
 		return
 	}
@@ -286,13 +567,26 @@ func deletePost(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	if c.App.Session.UserId == post.UserId {
-		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_DELETE_POST) {
-			c.SetPermissionError(model.PERMISSION_DELETE_POST)
-			return
+		if post.TeamId != "" {
+			if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_DELETE_TEAM_POST) {
+				c.SetPermissionError(model.PERMISSION_DELETE_TEAM_POST)
+				return
+			}
+		} else {
+			if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_DELETE_POST) {
+				c.SetPermissionError(model.PERMISSION_DELETE_POST)
+				return
+			}
 		}
 	} else {
-		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_DELETE_OTHERS_POSTS) {
-			return
+		if post.TeamId != "" {
+			if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_DELETE_OTHERS_TEAM_POSTS) {
+				return
+			}
+		} else {
+			if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_DELETE_OTHERS_POSTS) {
+				return
+			}
 		}
 	}
 
@@ -321,6 +615,13 @@ func selectBestAnswer(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_EDIT_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_EDIT_TEAM_POST)
+			return
+		}
+	}
+
 	if c.App.Session.UserId != post.UserId {
 		if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_EDIT_OTHERS_POSTS) {
 			c.SetPermissionError(model.PERMISSION_EDIT_OTHERS_POSTS)
@@ -347,10 +648,17 @@ func upvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_VOTE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_VOTE_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.UpVotePost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -372,10 +680,17 @@ func cancelUpvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_VOTE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_VOTE_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.CancelUpVotePost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -397,10 +712,17 @@ func downvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_VOTE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_VOTE_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.DownVotePost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -422,10 +744,17 @@ func cancelDownvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_VOTE_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_VOTE_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.CancelDownVotePost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -447,10 +776,17 @@ func flagPost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_FLAG_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_FLAG_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_FLAG_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.FlagPost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -472,10 +808,17 @@ func cancelFlagPost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_FLAG_POST)
 		return
+	}
+
+	if post.TeamId != "" {
+		if !c.App.SessionHasPermissionToTeam(c.App.Session, post.TeamId, model.PERMISSION_FLAG_TEAM_POST) {
+			c.SetPermissionError(model.PERMISSION_FLAG_TEAM_POST)
+			return
+		}
 	}
 
 	if err := c.App.CancelFlagPost(c.Params.PostId, c.App.Session.UserId); err != nil {
@@ -514,6 +857,44 @@ func searchPosts(c *Context, w http.ResponseWriter, r *http.Request) {
 	getPosts(c, w, r, options, false, false, false, true)
 }
 
+func searchPostsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	m := model.MapFromJson(r.Body)
+
+	postType := m["post_type"]
+	if !model.IsQuestionOrAnswer(postType) {
+		c.SetInvalidParam("post_type")
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: postType, TeamId: c.Params.TeamId}
+
+	if len(m["user_id"]) == 26 {
+		options.UserId = m["user_id"]
+	}
+
+	if postType == model.POST_TYPE_QUESTION {
+		if c.Params.NoAnswers {
+			options.NoAnswers = true
+		}
+
+		if len(m["tagged"]) > 0 {
+			options.Tagged = m["tagged"]
+		}
+	}
+
+	getPosts(c, w, r, options, false, false, false, true)
+}
+
 func advancedSearchPosts(c *Context, w http.ResponseWriter, r *http.Request) {
 	params := model.AdvancedSearchParameterFromJson(r.Body)
 	if params.Terms == nil || len(*params.Terms) == 0 || len(*params.Terms) > model.POST_SEARCH_TERMS_MAX {
@@ -534,7 +915,7 @@ func advancedSearchPosts(c *Context, w http.ResponseWriter, r *http.Request) {
 		timeZoneOffset = *c.Params.TimeZoneOffset
 	}
 
-	posts, totalCount, err := c.App.SearchPosts(*terms, sort, true, true, c.Params.Page, c.Params.PerPage, timeZoneOffset)
+	posts, totalCount, err := c.App.SearchPosts(*terms, sort, true, true, c.Params.Page, c.Params.PerPage, timeZoneOffset, "")
 	if err != nil {
 		c.Err = err
 		return
@@ -544,6 +925,94 @@ func advancedSearchPosts(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	//w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Write([]byte(data.ToJson()))
+}
+
+func advancedSearchPostsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	params := model.AdvancedSearchParameterFromJson(r.Body)
+	if params.Terms == nil || len(*params.Terms) == 0 || len(*params.Terms) > model.POST_SEARCH_TERMS_MAX {
+		c.SetInvalidParam("terms")
+		return
+	}
+
+	terms := params.Terms
+
+	sort := c.Params.SortType
+	if len(sort) > 0 && sort != model.POST_SORT_TYPE_CREATION && sort != model.POST_SORT_TYPE_ACTIVE && sort != model.POST_SORT_TYPE_VOTES {
+		c.SetInvalidUrlParam("sort")
+		return
+	}
+
+	timeZoneOffset := 0
+	if c.Params.TimeZoneOffset != nil {
+		timeZoneOffset = *c.Params.TimeZoneOffset
+	}
+
+	posts, totalCount, err := c.App.SearchPosts(*terms, sort, true, true, c.Params.Page, c.Params.PerPage, timeZoneOffset, c.Params.TeamId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	data := model.PostsWithCount{Posts: posts, TotalCount: totalCount}
+
+	//w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Write([]byte(data.ToJson()))
+}
+
+func similarPosts(c *Context, w http.ResponseWriter, r *http.Request) {
+	m := model.MapFromJson(r.Body)
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION}
+
+	if len(m["title"]) <= 0 {
+		c.SetInvalidParam("title")
+		return
+	}
+	options.Title = m["title"]
+
+	if len(m["tagged"]) > 0 {
+		options.Tagged = m["tagged"]
+	}
+
+	getPosts(c, w, r, options, false, false, false, true)
+}
+
+func similarPostsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	m := model.MapFromJson(r.Body)
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION, TeamId: c.Params.TeamId}
+
+	if len(m["title"]) <= 0 {
+		c.SetInvalidParam("title")
+		return
+	}
+	options.Title = m["title"]
+
+	if len(m["tagged"]) > 0 {
+		options.Tagged = m["tagged"]
+	}
+
+	getPosts(c, w, r, options, false, false, false, true)
 }
 
 func getQuestionsForUser(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -562,6 +1031,27 @@ func getQuestionsForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	getPosts(c, w, r, options, false, false, false, true)
 }
 
+func getQuestionsForTeamUser(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequireUserId()
+	if c.Err != nil {
+		return
+
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_QUESTION, UserId: c.Params.UserId, TeamId: c.Params.TeamId}
+
+	if c.Params.NoAnswers {
+		options.NoAnswers = true
+	}
+
+	getPosts(c, w, r, options, false, false, false, true)
+}
+
 func getAnswersForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	c.RequireUserId()
 	if c.Err != nil {
@@ -570,6 +1060,22 @@ func getAnswersForUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	options := &model.GetPostsOptions{PostType: model.POST_TYPE_ANSWER, UserId: c.Params.UserId}
+	getPosts(c, w, r, options, false, true, false, true)
+}
+
+func getAnswersForTeamUser(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequireUserId()
+	if c.Err != nil {
+		return
+
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	options := &model.GetPostsOptions{PostType: model.POST_TYPE_ANSWER, UserId: c.Params.UserId, TeamId: c.Params.TeamId}
 	getPosts(c, w, r, options, false, true, false, true)
 }
 

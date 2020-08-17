@@ -8,14 +8,10 @@ func (a *App) GetSingleInboxMessage(messageId string) (*model.InboxMessage, *mod
 	return a.Srv.Store.InboxMessage().GetSingle(messageId)
 }
 
-func (a *App) GetInboxMessagesForUserToDate(toDate int64, userId string, page, perPage int) ([]*model.InboxMessage, *model.AppError) {
-	return a.Srv.Store.InboxMessage().GetInboxMessages(toDate, userId, "<=", page, perPage)
+func (a *App) GetInboxMessagesForUserToDate(toDate int64, userId string, page, perPage int, teamId string) ([]*model.InboxMessage, *model.AppError) {
+	return a.Srv.Store.InboxMessage().GetInboxMessages(toDate, userId, "<=", page, perPage, teamId)
 }
 
-func (a *App) GetInboxMessagesUnreadCountForUser(userId string) (int64, *model.AppError) {
-	return a.Srv.Store.InboxMessage().GetInboxMessagesUnreadCount(userId, 0)
-}
-
-func (a *App) GetInboxMessagesUnreadCountForUserFromDate(userId string, fromDate int64) (int64, *model.AppError) {
-	return a.Srv.Store.InboxMessage().GetInboxMessagesUnreadCount(userId, fromDate)
+func (a *App) GetInboxMessagesUnreadCountForUser(userId string, teamId string) (int64, *model.AppError) {
+	return a.Srv.Store.InboxMessage().GetInboxMessagesUnreadCount(userId, 0, teamId)
 }

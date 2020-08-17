@@ -28,6 +28,11 @@ const (
 
 	PASSWORD_MAXIMUM_LENGTH = 64
 	PASSWORD_MINIMUM_LENGTH = 8
+
+	TEAM_SETTINGS_DEFAULT_MAX_USERS_PER_TEAM = 50
+
+	CACHE_SETTINGS_DEFAULT_ENDPOINT  = "http://localhost:6379"
+	SEARCH_SETTINGS_DEFAULT_ENDPOINT = "http://localhost:9200"
 )
 
 type ServiceSettings struct {
@@ -197,6 +202,42 @@ func (ss *ServiceSettings) isValid() *AppError {
 	return nil
 }
 
+type TeamSettings struct {
+	MaxUsersPerTeam       *int
+	MaxGroupsPerTeam      *int64
+	MaxCollectionsPerTeam *int64
+}
+
+func (s *TeamSettings) SetDefaults() {
+	if s.MaxUsersPerTeam == nil {
+		s.MaxUsersPerTeam = NewInt(TEAM_SETTINGS_DEFAULT_MAX_USERS_PER_TEAM)
+	}
+
+	if s.MaxGroupsPerTeam == nil {
+		s.MaxGroupsPerTeam = NewInt64(100)
+	}
+
+	if s.MaxCollectionsPerTeam == nil {
+		s.MaxCollectionsPerTeam = NewInt64(100)
+	}
+}
+
+func (s *TeamSettings) isValid() *AppError {
+	if *s.MaxUsersPerTeam <= 0 {
+		return NewAppError("Config.IsValid", "model.config.is_valid.max_users.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if *s.MaxGroupsPerTeam <= 0 {
+		return NewAppError("Config.IsValid", "model.config.is_valid.max_groups.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	if *s.MaxCollectionsPerTeam <= 0 {
+		return NewAppError("Config.IsValid", "model.config.is_valid.max_collections.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	return nil
+}
+
 type SqlSettings struct {
 	DriverName                  *string
 	DataSource                  *string
@@ -267,6 +308,39 @@ func (ss *SqlSettings) isValid() *AppError {
 		return NewAppError("Config.IsValid", "model.config.is_valid.sql_max_conn.app_error", nil, "", http.StatusBadRequest)
 	}
 
+	return nil
+}
+
+type CacheSettings struct {
+	CacheEndpoint  *string
+	CacheDefaultDb *int
+}
+
+func (s *CacheSettings) SetDefaults() {
+	if s.CacheEndpoint == nil {
+		s.CacheEndpoint = NewString(CACHE_SETTINGS_DEFAULT_ENDPOINT)
+	}
+
+	if s.CacheDefaultDb == nil {
+		s.CacheDefaultDb = NewInt(0)
+	}
+}
+
+func (s *CacheSettings) isValid() *AppError {
+	return nil
+}
+
+type SearchSettings struct {
+	SearchEndpoint *string
+}
+
+func (s *SearchSettings) SetDefaults() {
+	if s.SearchEndpoint == nil {
+		s.SearchEndpoint = NewString(SEARCH_SETTINGS_DEFAULT_ENDPOINT)
+	}
+}
+
+func (s *SearchSettings) isValid() *AppError {
 	return nil
 }
 
@@ -479,6 +553,9 @@ func (s *EmailBatchJobSettings) isValid() *AppError {
 type Config struct {
 	ServiceSettings       ServiceSettings
 	SqlSettings           SqlSettings
+	CacheSettings         CacheSettings
+	SearchSettings        SearchSettings
+	TeamSettings          TeamSettings
 	FileSettings          FileSettings
 	PasswordSettings      PasswordSettings
 	RateLimitSettings     RateLimitSettings
@@ -501,6 +578,9 @@ func (o *Config) Clone() *Config {
 
 func (o *Config) SetDefaults() {
 	o.SqlSettings.SetDefaults()
+	o.CacheSettings.SetDefaults()
+	o.SearchSettings.SetDefaults()
+	o.TeamSettings.SetDefaults()
 	o.ServiceSettings.SetDefaults()
 	o.FileSettings.SetDefaults()
 	o.PasswordSettings.SetDefaults()
@@ -511,6 +591,18 @@ func (o *Config) SetDefaults() {
 
 func (o *Config) IsValid() *AppError {
 	if err := o.SqlSettings.isValid(); err != nil {
+		return err
+	}
+
+	if err := o.CacheSettings.isValid(); err != nil {
+		return err
+	}
+
+	if err := o.SearchSettings.isValid(); err != nil {
+		return err
+	}
+
+	if err := o.TeamSettings.isValid(); err != nil {
 		return err
 	}
 

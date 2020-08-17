@@ -17,17 +17,17 @@ func (a *App) GetSinglePostByType(postId string, postType string) (*model.Post, 
 	return a.Srv.Store.Post().GetSingleByType(postId, postType)
 }
 
-func (a *App) GetPostCountByUserId(userId string, postType string) (int64, *model.AppError) {
-	return a.Srv.Store.Post().GetPostCountByUserId(postType, userId)
+func (a *App) GetPostCountByUserId(userId string, postType string, teamId string) (int64, *model.AppError) {
+	return a.Srv.Store.Post().GetPostCountByUserId(postType, userId, teamId)
 }
 
-func (a *App) CreateQuestion(post *model.Post) (*model.Post, *model.AppError) {
+func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post, *model.AppError) {
 	user, err := a.GetUser(post.UserId)
 	if err != nil || user == nil {
 		return nil, model.NewAppError("CreateQuestion", "api.post.create_question.post_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if len(post.TeamId) == 0 && user.IsSuspending() {
 		return nil, model.NewAppError("CreateQuestion", "api.post.create_question.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -46,6 +46,7 @@ func (a *App) CreateQuestion(post *model.Post) (*model.Post, *model.AppError) {
 		ParentId:    "",
 		BestId:      "",
 		UserId:      post.UserId,
+		TeamId:      post.TeamId,
 		Title:       post.Title,
 		Content:     post.Content,
 		Tags:        post.Tags,
@@ -60,6 +61,40 @@ func (a *App) CreateQuestion(post *model.Post) (*model.Post, *model.AppError) {
 	if err != nil {
 		mlog.Error("Couldn't save the question", mlog.Err(err))
 		return nil, err
+	}
+
+	if group != nil {
+		max := len(post.Content)
+		if max > model.INBOX_MESSAGE_CONTENT_MAX_LENGTH {
+			max = model.INBOX_MESSAGE_CONTENT_MAX_LENGTH
+		}
+		content := post.Content[0:max]
+
+		curTime := model.GetMillis()
+		var messages []*model.InboxMessage
+
+		members, err := a.GetGroupMembersPage(group.Id, "", 0, model.GROUP_MEMBER_SEARCH_DEFAULT_LIMIT)
+		for _, member := range *members {
+			message := &model.InboxMessage{
+				Content:    content,
+				SenderId:   post.UserId,
+				QuestionId: post.Id,
+				Title:      post.Title,
+				AnswerId:   "",
+				CommentId:  "",
+				TeamId:     group.TeamId,
+				CreateAt:   curTime,
+			}
+			message.Type = model.INBOX_MESSAGE_TYPE_QUESTION
+			message.UserId = member.UserId
+
+			messages = append(messages, message)
+
+			_, err = a.Srv.Store.InboxMessage().SaveMultipleInboxMessages(messages)
+			if err != nil {
+				return nil, model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.save_multiple_inbox_messages.app_error", nil, err.Error(), http.StatusInternalServerError)
+			}
+		}
 	}
 
 	return rpost, nil
@@ -85,11 +120,11 @@ func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
 		return nil, model.NewAppError("CreateAnswer", "api.post.create_answer.post_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if len(post.TeamId) == 0 && user.IsSuspending() {
 		return nil, model.NewAppError("CreateAnswer", "api.post.create_answer.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if parentQuestion.IsProtected() && user.Points < model.MIN_USER_POINT_FOR_ANSWER_FOR_PROTECTED_POST {
+	if len(post.TeamId) == 0 && parentQuestion.IsProtected() && user.Points < model.MIN_USER_POINT_FOR_ANSWER_FOR_PROTECTED_POST {
 		return nil, model.NewAppError("CreateAnswer", "api.post.create_answer.protected.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -99,6 +134,7 @@ func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
 		ParentId:    parentQuestion.Id,
 		BestId:      "",
 		UserId:      post.UserId,
+		TeamId:      post.TeamId,
 		Title:       "",
 		Content:     post.Content,
 		Tags:        "",
@@ -133,7 +169,7 @@ func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
 		return nil, model.NewAppError("CreateComment", "api.post.create_comment.post_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if len(post.TeamId) == 0 && user.IsSuspending() {
 		return nil, model.NewAppError("CreateComment", "api.post.create_comment.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -153,6 +189,7 @@ func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
 		ParentId:    parent.Id,
 		BestId:      "",
 		UserId:      post.UserId,
+		TeamId:      post.TeamId,
 		Title:       "",
 		Content:     post.Content,
 		Tags:        "",
@@ -224,6 +261,7 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 			Title:      root.Title,
 			AnswerId:   answerId,
 			CommentId:  post.Id,
+			TeamId:     post.TeamId,
 			CreateAt:   curTime,
 		}
 		message.Type = model.INBOX_MESSAGE_TYPE_COMMENT
@@ -270,6 +308,8 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 	var messages []*model.InboxMessage
 	replyToParentAuthor := false
 
+	// TODO: User Groups can also be referred to in comments or posts using @
+	// in the same way you would notify any individual member of your Team.
 	for _, name := range repliedNames {
 		if usersForName, ok := usersMap[name]; ok {
 			for _, user := range usersForName {
@@ -280,6 +320,7 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 					Title:      root.Title,
 					AnswerId:   answerId,
 					CommentId:  post.Id,
+					TeamId:     post.TeamId,
 					CreateAt:   curTime,
 				}
 				message.Type = model.INBOX_MESSAGE_TYPE_COMMENT_REPLY
@@ -302,6 +343,7 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 			Title:      root.Title,
 			AnswerId:   answerId,
 			CommentId:  post.Id,
+			TeamId:     post.TeamId,
 			CreateAt:   curTime,
 		}
 		message.Type = model.INBOX_MESSAGE_TYPE_COMMENT
@@ -516,7 +558,7 @@ func populateEmptyComments(postIds []string, comments map[string][]*model.Post) 
 	return comments
 }
 
-func (a *App) SearchPosts(terms string, sortType string, getParent bool, limitContent bool, page int, perPage int, timeZoneOffset int) (model.Posts, int64, *model.AppError) {
+func (a *App) SearchPosts(terms string, sortType string, getParent bool, limitContent bool, page int, perPage int, timeZoneOffset int, teamId string) (model.Posts, int64, *model.AppError) {
 	paramsList := model.ParseSearchParams(strings.TrimSpace(terms), timeZoneOffset)
 
 	finalParamsList := []*model.SearchParams{}
@@ -530,7 +572,7 @@ func (a *App) SearchPosts(terms string, sortType string, getParent bool, limitCo
 		return nil, int64(0), err
 	}
 
-	posts, totalCount, err := a.Srv.Store.Post().SearchPosts(finalParamsList, sortType, page, perPage)
+	posts, totalCount, err := a.Srv.Store.Post().SearchPosts(finalParamsList, sortType, page, perPage, teamId)
 	if err != nil {
 		return nil, int64(0), err
 	}
@@ -695,7 +737,7 @@ func (a *App) UpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("UpVotePost", "api.post.upvote.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	if post.IsLocked() {
+	if post.TeamId == "" && post.IsLocked() {
 		return model.NewAppError("UpVotePost", "api.post.upvote.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -704,7 +746,7 @@ func (a *App) UpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("UpVotePost", "api.post.upvote.session_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if post.TeamId == "" && user.IsSuspending() {
 		return model.NewAppError("UpVotePost", "api.post.upvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -727,7 +769,7 @@ func (a *App) CancelUpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelUpVotePost", "api.post.cancel_upvote.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	if post.IsLocked() {
+	if post.TeamId == "" && post.IsLocked() {
 		return model.NewAppError("CancelUpVotePost", "api.post.cancel_upvote.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -740,7 +782,7 @@ func (a *App) CancelUpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelUpVotePost", "api.post.cancel_upvote.session_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if post.TeamId == "" && user.IsSuspending() {
 		return model.NewAppError("CancelUpVotePost", "api.post.cancel_upvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -767,7 +809,7 @@ func (a *App) DownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("DownVotePost", "api.post.downvote.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	if post.IsLocked() {
+	if post.TeamId == "" && post.IsLocked() {
 		return model.NewAppError("DownVotePost", "api.post.downvote.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -776,7 +818,7 @@ func (a *App) DownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("DownVotePost", "api.post.downvote.session_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if post.TeamId == "" && user.IsSuspending() {
 		return model.NewAppError("DownVotePost", "api.post.downvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -803,7 +845,7 @@ func (a *App) CancelDownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelDownVotePost", "api.post.cancel_downvote.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	if post.IsLocked() {
+	if post.TeamId == "" && post.IsLocked() {
 		return model.NewAppError("CancelDownVotePost", "api.post.cancel_downvote.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -812,7 +854,7 @@ func (a *App) CancelDownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelDownVotePost", "api.post.cancel_downvote.session_user.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if user.IsSuspending() {
+	if post.TeamId == "" && user.IsSuspending() {
 		return model.NewAppError("CancelDownVotePost", "api.post.cancel_downvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
@@ -876,6 +918,11 @@ func (a *App) LockPost(postId string, userId string) *model.AppError {
 		return model.NewAppError("LockPost", "api.post.lock.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
+	// TODO: teamの場合も対応
+	if post.TeamId != "" {
+		return model.NewAppError("LockPost", "api.post.lock.team.app_error", nil, "", http.StatusBadRequest)
+	}
+
 	return a.Srv.Store.Post().LockPost(postId, model.GetMillis(), userId)
 }
 
@@ -898,6 +945,11 @@ func (a *App) CancelLockPost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelLockPost", "api.post.cancel_lock.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
+	// TODO: teamの場合も対応
+	if post.TeamId != "" {
+		return model.NewAppError("CancelLockPost", "api.post.cancel_lock.team.app_error", nil, "", http.StatusBadRequest)
+	}
+
 	return a.Srv.Store.Post().CancelLockPost(postId, userId)
 }
 
@@ -914,6 +966,11 @@ func (a *App) ProtectPost(postId string, userId string) *model.AppError {
 
 	if post.Type != model.POST_TYPE_QUESTION {
 		return model.NewAppError("ProtectPost", "api.post.protect.get.app_error", nil, "", http.StatusBadRequest)
+	}
+
+	// TODO: teamの場合も対応
+	if post.TeamId != "" {
+		return model.NewAppError("ProtectPost", "api.post.protect.team.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	return a.Srv.Store.Post().ProtectPost(postId, model.GetMillis(), userId)
@@ -934,6 +991,11 @@ func (a *App) CancelProtectPost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelProtectPost", "api.post.cancel_protect.get.app_error", nil, "", http.StatusBadRequest)
 	}
 
+	// TODO: teamの場合も対応
+	if post.TeamId != "" {
+		return model.NewAppError("CancelProtectPost", "api.post.cancel_protect.team.app_error", nil, "", http.StatusBadRequest)
+	}
+
 	return a.Srv.Store.Post().CancelProtectPost(postId, userId)
 }
 
@@ -941,4 +1003,8 @@ func (a *App) DeletePostFiles(post *model.Post) {
 	if _, err := a.Srv.Store.FileInfo().DeleteForPost(post.Id); err != nil {
 		mlog.Warn("Encountered error when deleting files for post", mlog.String("post_id", post.Id), mlog.Err(err))
 	}
+}
+
+func (a *App) ViewPost(post *model.Post, userId string, ipAddress string) {
+	return a.Srv.Store.Post().ViewPost(post.Id, userId, ipAddress, 1)
 }

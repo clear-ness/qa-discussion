@@ -16,6 +16,7 @@ import (
 	"github.com/go-gorp/gorp"
 )
 
+// TODO: このファイル全体でteam,group,member再考
 type SqlPostStore struct {
 	store.Store
 	maxPostSizeOnce   sync.Once
@@ -23,12 +24,13 @@ type SqlPostStore struct {
 }
 
 func tagSliceColumns() []string {
-	return []string{"Content", "PostCount", "CreateAt", "UpdateAt"}
+	return []string{"Content", "TeamId", "PostCount", "CreateAt", "UpdateAt"}
 }
 
 func tagToSlice(tag *model.Tag) []interface{} {
 	return []interface{}{
 		tag.Content,
+		tag.TeamId,
 		tag.PostCount,
 		tag.CreateAt,
 		tag.UpdateAt,
@@ -86,7 +88,7 @@ func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.P
 	addedTags := strings.Fields(post.Tags)
 
 	if len(addedTags) > 0 {
-		sql, args, err := s.buildInsertTagsQuery(addedTags, curTime)
+		sql, args, err := s.buildInsertTagsQuery(addedTags, curTime, post.TeamId)
 		if err != nil {
 			return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
@@ -96,12 +98,19 @@ func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.P
 		}
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForCreateQuestion, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForCreateQuestion, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForCreateQuestion WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_CREATE_QUESTION,
 		Points:   model.USER_POINT_FOR_CREATE_QUESTION,
@@ -198,12 +207,19 @@ func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Pos
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForCreateAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForCreateAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForCreateAnswer WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_CREATE_ANSWER,
 		Points:   model.USER_POINT_FOR_CREATE_ANSWER,
@@ -293,13 +309,13 @@ func (s *SqlPostStore) update(transaction *gorp.Transaction, post *model.Post, r
 	}
 
 	for _, tagContent := range removedTags {
-		if _, err := transaction.Exec("UPDATE Tags SET PostCount = PostCount - 1, UpdateAt = :UpdateAt WHERE Content = :Content", map[string]interface{}{"UpdateAt": curTime, "Content": tagContent}); err != nil {
+		if _, err := transaction.Exec("UPDATE Tags SET PostCount = PostCount - 1, UpdateAt = :UpdateAt WHERE Content = :Content AND TeamId = :TeamId", map[string]interface{}{"UpdateAt": curTime, "Content": tagContent, "TeamId": post.TeamId}); err != nil {
 			return model.NewAppError("SqlPostStore.update", "store.sql_post.update.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 	}
 
 	if len(addedTags) > 0 {
-		sql, args, err := s.buildInsertTagsQuery(addedTags, curTime)
+		sql, args, err := s.buildInsertTagsQuery(addedTags, curTime, post.TeamId)
 		if err != nil {
 			return model.NewAppError("SqlPostStore.update", "store.sql_post.update.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
@@ -312,12 +328,13 @@ func (s *SqlPostStore) update(transaction *gorp.Transaction, post *model.Post, r
 	return nil
 }
 
-func (s *SqlPostStore) buildInsertTagsQuery(addedTags []string, time int64) (string, []interface{}, error) {
+func (s *SqlPostStore) buildInsertTagsQuery(addedTags []string, time int64, teamId string) (string, []interface{}, error) {
 	query := s.GetQueryBuilder().Insert("Tags").Columns(tagSliceColumns()...)
 
 	for _, tagContent := range addedTags {
 		tag := &model.Tag{
 			Content:   tagContent,
+			TeamId:    teamId,
 			PostCount: 1,
 			CreateAt:  time,
 			UpdateAt:  time,
@@ -363,7 +380,17 @@ func (s *SqlPostStore) GetSingleByType(id string, postType string) (*model.Post,
 	return post, nil
 }
 
-func (s *SqlPostStore) GetPostCountByUserId(postType string, userId string) (int64, *model.AppError) {
+func (s *SqlPostStore) GetPostCountByUserId(postType string, userId string, teamId string) (int64, *model.AppError) {
+	args := map[string]interface{}{"UserId": userId, "Type": postType}
+
+	teamFilter := ""
+	if teamId == "" {
+		teamFilter = "AND TeamId IS NULL"
+	} else {
+		teamFilter = "AND TeamId = :TeamId"
+		args["TeamId"] = teamId
+	}
+
 	count, err := s.GetReplica().SelectInt(`
 		SELECT
 			count(*)
@@ -371,9 +398,9 @@ func (s *SqlPostStore) GetPostCountByUserId(postType string, userId string) (int
 			Posts
 		WHERE
 			UserId = :UserId
-		AND Type = :Type
-		AND DeleteAt = 0`,
-		map[string]interface{}{"UserId": userId, "Type": postType})
+			AND Type = :Type
+			`+teamFilter+`
+			AND DeleteAt = 0`, args)
 
 	if err != nil {
 		return 0, model.NewAppError("SqlPostStore.GetPostCountByUserId", "store.sql_post.get_post_count_by_user_id.app_error", nil, err.Error(), http.StatusInternalServerError)
@@ -419,9 +446,19 @@ func (s *SqlPostStore) GetPosts(options *model.GetPostsOptions, getCount bool) (
 		ToDate:   options.ToDate,
 		Page:     options.Page,
 		PerPage:  options.PerPage,
+		TeamId:   options.TeamId,
 	}
 
-	if options.Tagged != "" {
+	if options.Title != "" {
+		searchOptions.Terms = options.Title
+		if options.Tagged != "" {
+			searchOptions.Terms += " " + options.Tagged
+		}
+		searchOptions.TermsType = model.TERMS_TYPE_SIMILAR
+	} else if options.Link != "" {
+		searchOptions.Terms = options.Link
+		searchOptions.TermsType = model.TERMS_TYPE_LINK
+	} else if options.Tagged != "" {
 		searchOptions.Terms = options.Tagged
 		searchOptions.TermsType = model.TERMS_TYPE_TAG
 	}
@@ -474,7 +511,7 @@ func (s *SqlPostStore) GetPosts(options *model.GetPostsOptions, getCount bool) (
 }
 
 // advanced search
-func (s *SqlPostStore) SearchPosts(paramsList []*model.SearchParams, sortType string, page, perPage int) (model.Posts, int64, *model.AppError) {
+func (s *SqlPostStore) SearchPosts(paramsList []*model.SearchParams, sortType string, page, perPage int, teamId string) (model.Posts, int64, *model.AppError) {
 	options := []*model.SearchPostsOptions{}
 	for _, params := range paramsList {
 		fromDate := int64(0)
@@ -503,6 +540,7 @@ func (s *SqlPostStore) SearchPosts(paramsList []*model.SearchParams, sortType st
 			ToDate:        toDate,
 			Page:          0,
 			PerPage:       model.POST_SEARCH_MAX_COUNT * 5,
+			TeamId:        teamId,
 		}
 
 		options = append(options, option)
@@ -630,6 +668,14 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 		})
 	}
 
+	if options.TeamId != "" {
+		query = query.Where(sq.And{
+			sq.Expr(`TeamId = ?`, options.TeamId),
+		})
+	} else {
+		query = query.Where("TeamId IS NULL")
+	}
+
 	if len(options.Ids) > 0 {
 		query = query.Where(sq.And{
 			sq.Expr(`Id IN (?)`, options.Ids[0]),
@@ -689,13 +735,18 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 		orderBy = "Points DESC"
 	} else if options.SortType == model.POST_SORT_TYPE_ANSWERS {
 		orderBy = "AnswerCount DESC"
+	} else if options.TermsType == model.TERMS_TYPE_SIMILAR && options.SortType == model.POST_SORT_TYPE_RELEVANCE {
+		// mysqlではデフォルトで似ている順になるため。
+		orderBy = ""
 	}
 
 	terms := options.Terms
 	excludedTerms := options.ExcludedTerms
 
 	for _, c := range specialSearchChar {
-		terms = strings.Replace(terms, c, " ", -1)
+		if options.TermsType != model.TERMS_TYPE_LINK {
+			terms = strings.Replace(terms, c, " ", -1)
+		}
 		excludedTerms = strings.Replace(excludedTerms, c, " ", -1)
 	}
 
@@ -703,11 +754,13 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 		searchColumns := ""
 		if options.TermsType == model.TERMS_TYPE_TAG {
 			searchColumns = "Tags"
+		} else if options.TermsType == model.TERMS_TYPE_SIMILAR {
+			searchColumns = "Title, Tags"
 		} else if options.TermsType == model.TERMS_TYPE_PLAIN {
 			searchColumns = "Title, Tags, Content"
 		} else if options.TermsType == model.TERMS_TYPE_TITLE {
 			searchColumns = "Title"
-		} else if options.TermsType == model.TERMS_TYPE_BODY {
+		} else if options.TermsType == model.TERMS_TYPE_BODY || options.TermsType == model.TERMS_TYPE_LINK {
 			searchColumns = "Content"
 		} else {
 			searchColumns = "Title, Tags, Content"
@@ -722,7 +775,13 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 		splitTerms := []string{}
 		for _, t := range strings.Fields(terms) {
 			if len(t) >= model.TAG_MIN_RUNES {
-				splitTerms = append(splitTerms, "+"+t)
+				if options.TermsType == model.TERMS_TYPE_SIMILAR {
+					splitTerms = append(splitTerms, t)
+				} else if options.TermsType == model.TERMS_TYPE_LINK {
+					splitTerms = append(splitTerms, "\""+t+"\"")
+				} else {
+					splitTerms = append(splitTerms, "+"+t)
+				}
 			}
 		}
 		terms = strings.Join(splitTerms, " ") + excludeClause
@@ -733,9 +792,10 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 	}
 
 	if !countQuery {
-		query = query.OrderBy(orderBy).
-			Limit(uint64(options.PerPage)).
-			Offset(uint64(offset))
+		if orderBy != "" {
+			query = query.OrderBy(orderBy)
+		}
+		query = query.Limit(uint64(options.PerPage)).Offset(uint64(offset))
 	}
 
 	return query
@@ -778,18 +838,25 @@ func (s *SqlPostStore) deleteQuestion(transaction *gorp.Transaction, post *model
 
 	tagContents := strings.Fields(post.Tags)
 	for _, tagContent := range tagContents {
-		if _, err := transaction.Exec("UPDATE Tags SET PostCount = PostCount - 1 WHERE Content = :Content",
-			map[string]interface{}{"Content": tagContent}); err != nil {
+		if _, err := transaction.Exec("UPDATE Tags SET PostCount = PostCount - 1 WHERE Content = :Content AND TeamId = :TeamId",
+			map[string]interface{}{"Content": tagContent, "TeamId": post.TeamId}); err != nil {
 			return model.NewAppError("SqlPostStore.deleteQuestion", "store.sql_post.delete_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForCreateQuestion, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "UpdateAt": time, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.deleteQuestion", "store.sql_post.delete_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForCreateQuestion, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "UpdateAt": time, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.deleteQuestion", "store.sql_post.delete_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points - :PointForCreateQuestion WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForCreateQuestion": model.USER_POINT_FOR_CREATE_QUESTION, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.deleteQuestion", "store.sql_post.delete_question.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DELETE_QUESTION,
 		Points:   -(model.USER_POINT_FOR_CREATE_QUESTION),
@@ -844,12 +911,19 @@ func (s *SqlPostStore) deleteAnswer(transaction *gorp.Transaction, post *model.P
 
 	curTime := model.GetMillis()
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForCreateAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.deleteAnswer", "store.sql_post.delete_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForCreateAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.deleteAnswer", "store.sql_post.delete_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points - :PointForCreateAnswer WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForCreateAnswer": model.USER_POINT_FOR_CREATE_ANSWER, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.deleteAnswer", "store.sql_post.delete_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DELETE_ANSWER,
 		Points:   -(model.USER_POINT_FOR_CREATE_ANSWER),
@@ -937,16 +1011,27 @@ func (s *SqlPostStore) selectBestAnswer(transaction *gorp.Transaction, post *mod
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForSelectAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForSelectAnswer": model.USER_POINT_FOR_SELECT_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForSelectAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForSelectAnswer": model.USER_POINT_FOR_SELECT_ANSWER, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForSelectedAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForSelectedAnswer": model.USER_POINT_FOR_SELECTED_ANSWER, "UpdateAt": curTime, "Id": ans.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForSelectedAnswer, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForSelectedAnswer": model.USER_POINT_FOR_SELECTED_ANSWER, "UpdateAt": curTime, "Id": ans.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForSelectAnswer WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForSelectAnswer": model.USER_POINT_FOR_SELECT_ANSWER, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForSelectedAnswer WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForSelectedAnswer": model.USER_POINT_FOR_SELECTED_ANSWER, "TeamId": ans.TeamId, "UserId": ans.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_SELECT_ANSWER,
 		Points:   model.USER_POINT_FOR_SELECT_ANSWER,
@@ -958,6 +1043,7 @@ func (s *SqlPostStore) selectBestAnswer(transaction *gorp.Transaction, post *mod
 
 	user_point_history2 := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   ans.TeamId,
 		UserId:   ans.UserId,
 		Type:     model.USER_POINT_TYPE_SELECTED_ANSWER,
 		Points:   model.USER_POINT_FOR_SELECTED_ANSWER,
@@ -1083,6 +1169,7 @@ func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Pos
 		PostId:   post.Id,
 		UserId:   userId,
 		Type:     model.VOTE_TYPE_UP_VOTE,
+		TeamId:   post.TeamId,
 		CreateAt: curTime,
 	}
 
@@ -1099,12 +1186,19 @@ func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Pos
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_VOTED,
 		Points:   model.USER_POINT_FOR_VOTED,
@@ -1177,12 +1271,19 @@ func (s *SqlPostStore) cancelUpvotePost(transaction *gorp.Transaction, vote *mod
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points - :PointForVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_VOTED_CANCELED,
 		Points:   -(model.USER_POINT_FOR_VOTED),
@@ -1230,6 +1331,7 @@ func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.P
 		PostId:   post.Id,
 		UserId:   userId,
 		Type:     model.VOTE_TYPE_DOWN_VOTE,
+		TeamId:   post.TeamId,
 		CreateAt: curTime,
 	}
 
@@ -1246,12 +1348,19 @@ func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.P
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForDownVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForDownVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForDownVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DOWN_VOTED,
 		Points:   model.USER_POINT_FOR_DOWN_VOTED,
@@ -1324,12 +1433,19 @@ func (s *SqlPostStore) cancelDownvotePost(transaction *gorp.Transaction, vote *m
 		return nil
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForDownVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForDownVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points - :PointForDownVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DOWN_VOTED_CANCELED,
 		Points:   -(model.USER_POINT_FOR_DOWN_VOTED),
@@ -1377,6 +1493,7 @@ func (s *SqlPostStore) flagPost(transaction *gorp.Transaction, post *model.Post,
 		PostId:   post.Id,
 		UserId:   userId,
 		Type:     model.VOTE_TYPE_FLAG,
+		TeamId:   post.TeamId,
 		CreateAt: curTime,
 	}
 
@@ -1388,12 +1505,19 @@ func (s *SqlPostStore) flagPost(transaction *gorp.Transaction, post *model.Post,
 		return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForFlagged, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForFlagged, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForFlagged WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_FLAGGED,
 		Points:   model.USER_POINT_FOR_FLAGGED,
@@ -1457,12 +1581,19 @@ func (s *SqlPostStore) cancelFlagPost(transaction *gorp.Transaction, flag *model
 		return model.NewAppError("SqlPostStore.cancelFlagPost", "store.sql_post.cancelFlagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForFlagged, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-		return model.NewAppError("SqlPostStore.cancelFlagPost", "store.sql_post.cancelFlagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	if len(post.TeamId) == 0 {
+		if _, err := transaction.Exec("UPDATE Users SET Points = Points - :PointForFlagged, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.cancelFlagPost", "store.sql_post.cancelFlagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+	} else {
+		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points - :PointForFlagged WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
+			return model.NewAppError("SqlPostStore.cancelFlagPost", "store.sql_post.cancelFlagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
 	}
 
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
+		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_FLAGGED_CANCELED,
 		Points:   -(model.USER_POINT_FOR_FLAGGED),

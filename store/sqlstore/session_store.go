@@ -32,6 +32,18 @@ func (me SqlSessionStore) Save(session *model.Session) (*model.Session, *model.A
 		return nil, model.NewAppError("SqlSessionStore.Save", "store.sql_session.save.app_error", nil, "id="+session.Id+", "+err.Error(), http.StatusInternalServerError)
 	}
 
+	teamMembers, err := me.Team().GetTeamsForUser(session.UserId)
+	if err != nil {
+		return nil, model.NewAppError("SqlSessionStore.Save", "store.sql_session.save.app_error", nil, "id="+session.Id+", "+err.Error(), http.StatusInternalServerError)
+	}
+
+	session.TeamMembers = make([]*model.TeamMember, 0, len(teamMembers))
+	for _, tm := range teamMembers {
+		if tm.DeleteAt == 0 {
+			session.TeamMembers = append(session.TeamMembers, tm)
+		}
+	}
+
 	return session, nil
 }
 
@@ -44,6 +56,17 @@ func (me SqlSessionStore) Get(sessionIdOrToken string) (*model.Session, *model.A
 		return nil, model.NewAppError("SqlSessionStore.Get", "store.sql_session.get.app_error", nil, "sessionIdOrToken="+sessionIdOrToken, http.StatusNotFound)
 	}
 	session := sessions[0]
+
+	tempMembers, err := me.Team().GetTeamsForUser(sessions[0].UserId)
+	if err != nil {
+		return nil, model.NewAppError("SqlSessionStore.Get", "store.sql_session.get.app_error", nil, "sessionIdOrToken="+sessionIdOrToken+", "+err.Error(), http.StatusInternalServerError)
+	}
+	sessions[0].TeamMembers = make([]*model.TeamMember, 0, len(tempMembers))
+	for _, tm := range tempMembers {
+		if tm.DeleteAt == 0 {
+			sessions[0].TeamMembers = append(sessions[0].TeamMembers, tm)
+		}
+	}
 
 	return session, nil
 }

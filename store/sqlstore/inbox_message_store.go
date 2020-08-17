@@ -14,7 +14,7 @@ type SqlInboxMessageStore struct {
 }
 
 func inboxMessageSliceColumns() []string {
-	return []string{"Id", "Type", "Content", "UserId", "SenderId", "QuestionId", "Title", "AnswerId", "CommentId", "CreateAt"}
+	return []string{"Id", "Type", "Content", "UserId", "SenderId", "QuestionId", "Title", "AnswerId", "CommentId", "TeamId", "CreateAt"}
 }
 
 func inboxMessageToSlice(inboxMessage *model.InboxMessage) []interface{} {
@@ -28,6 +28,7 @@ func inboxMessageToSlice(inboxMessage *model.InboxMessage) []interface{} {
 		inboxMessage.Title,
 		inboxMessage.AnswerId,
 		inboxMessage.CommentId,
+		inboxMessage.TeamId,
 		inboxMessage.CreateAt,
 	}
 }
@@ -54,7 +55,7 @@ func (s SqlInboxMessageStore) GetSingle(id string) (*model.InboxMessage, *model.
 	return message, nil
 }
 
-func (s SqlInboxMessageStore) GetInboxMessages(time int64, userId string, direction string, page, perPage int) ([]*model.InboxMessage, *model.AppError) {
+func (s SqlInboxMessageStore) GetInboxMessages(time int64, userId string, direction string, page, perPage int, teamId string) ([]*model.InboxMessage, *model.AppError) {
 	offset := page * perPage
 
 	if direction != ">" && direction != "<=" {
@@ -67,6 +68,11 @@ func (s SqlInboxMessageStore) GetInboxMessages(time int64, userId string, direct
 			sq.Expr(`UserId = ?`, userId),
 			sq.Expr(`CreateAt `+direction+` ?`, time),
 		})
+
+	// TODO: 問題無い？
+	query = query.Where(sq.And{
+		sq.Expr(`TeamId = ?`, teamId),
+	})
 
 	query = query.OrderBy("CreateAt DESC").
 		Limit(uint64(perPage)).
@@ -103,13 +109,14 @@ func (s SqlInboxMessageStore) GetInboxMessages(time int64, userId string, direct
 	return messages, nil
 }
 
-func (s SqlInboxMessageStore) GetInboxMessagesUnreadCount(userId string, fromDate int64) (int64, *model.AppError) {
+func (s SqlInboxMessageStore) GetInboxMessagesUnreadCount(userId string, fromDate int64, teamId string) (int64, *model.AppError) {
 	createAtPart := "(SELECT LastInboxMessageViewed FROM Users WHERE Id = :UserId)"
 
 	if fromDate != 0 {
 		createAtPart = strconv.FormatInt(fromDate, 10)
 	}
 
+	// TODO: 問題無い？
 	count, err := s.GetMaster().SelectInt(`
 		SELECT
 			count(*)
@@ -117,8 +124,9 @@ func (s SqlInboxMessageStore) GetInboxMessagesUnreadCount(userId string, fromDat
 			InboxMessages
 		WHERE
 			UserId = :UserId
+			AND TeamId = :TeamId
 			AND CreateAt > `+createAtPart,
-		map[string]interface{}{"UserId": userId})
+		map[string]interface{}{"UserId": userId, "TeamId": teamId})
 
 	if err != nil {
 		return 0, model.NewAppError("SqlInboxMessageStore.GetInboxMessagesUnreadCount", "store.sql_inbox_message.get_inbox_messages_unread_count.get_unread_count.app_error", nil, "", http.StatusInternalServerError)

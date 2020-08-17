@@ -8,8 +8,8 @@ import (
 	"github.com/clear-ness/qa-discussion/model"
 )
 
-func (a *App) GetUserFavoritePostsForUser(toDate int64, userId string, page, perPage int, limitContent bool) ([]*model.UserFavoritePostWithPost, int64, *model.AppError) {
-	favoritePosts, totalCount, err := a.Srv.Store.UserFavoritePost().GetUserFavoritePostsBeforeTime(toDate, userId, page, perPage, true)
+func (a *App) GetUserFavoritePostsForUser(toDate int64, userId string, page, perPage int, limitContent bool, teamId string) ([]*model.UserFavoritePostWithPost, int64, *model.AppError) {
+	favoritePosts, totalCount, err := a.Srv.Store.UserFavoritePost().GetUserFavoritePostsBeforeTime(toDate, userId, page, perPage, true, teamId)
 	if err != nil {
 		return nil, int64(0), err
 	}
@@ -90,7 +90,7 @@ func (a *App) CreateUserFavoritePost(postId string, userId string) *model.AppErr
 		return model.NewAppError("CreateUserFavoritePost", "api.user_favorite_post.create.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	return a.Srv.Store.UserFavoritePost().Save(postId, userId)
+	return a.Srv.Store.UserFavoritePost().Save(postId, userId, post.TeamId)
 }
 
 func (a *App) DeleteUserFavoritePost(postId string, userId string) *model.AppError {
