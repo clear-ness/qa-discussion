@@ -11,7 +11,7 @@ func (api *API) InitCollection() {
 	api.BaseRoutes.Collections.Handle("", api.ApiSessionRequired(createCollection)).Methods("POST")
 
 	api.BaseRoutes.CollectionsForTeam.Handle("", api.ApiSessionRequired(getCollectionsForTeam)).Methods("GET")
-	// TODO: collection.titleでも検索出来る様に(full text)
+	api.BaseRoutes.CollectionsForTeam.Handle("", api.ApiSessionRequired(searchCollectionsForTeam)).Methods("POST")
 
 	//api.BaseRoutes.Collection.Handle("", api.ApiSessionRequired(getCollection)).Methods("GET")
 	//api.BaseRoutes.Collection.Handle("", api.ApiSessionRequired(updateCollection)).Methods("PUT")
@@ -136,7 +136,40 @@ func getCollectionsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cols, err := c.App.GetCollectionsForTeam(c.Params.TeamId, c.Params.Page*c.Params.PerPage, c.Params.PerPage)
+	cols, err := c.App.GetCollectionsForTeam(c.Params.TeamId, c.Params.Page*c.Params.PerPage, c.Params.PerPage, "")
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	w.Write([]byte(cols.ToJson()))
+}
+
+func searchCollectionsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	m := model.MapFromJson(r.Body)
+	title := m["title"]
+	if len(title) <= 0 {
+		c.SetInvalidParam("title")
+		return
+	}
+
+	team, err := c.App.GetTeam(c.Params.TeamId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, team.Id, model.PERMISSION_VIEW_TEAM) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM)
+		return
+	}
+
+	cols, err := c.App.GetCollectionsForTeam(c.Params.TeamId, c.Params.Page*c.Params.PerPage, c.Params.PerPage, title)
 	if err != nil {
 		c.Err = err
 		return

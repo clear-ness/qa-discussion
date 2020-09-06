@@ -12,12 +12,12 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/cors"
 
-	"github.com/clear-ness/qa-discussion/cachelayer"
 	"github.com/clear-ness/qa-discussion/config"
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
-	"github.com/clear-ness/qa-discussion/searchlayer"
 	"github.com/clear-ness/qa-discussion/store"
+	"github.com/clear-ness/qa-discussion/store/cachelayer"
+	"github.com/clear-ness/qa-discussion/store/searchlayer"
 	"github.com/clear-ness/qa-discussion/store/sqlstore"
 	"github.com/clear-ness/qa-discussion/utils"
 )
@@ -92,7 +92,7 @@ func NewServer(options ...Option) (*Server, error) {
 
 	if s.newStore == nil {
 		s.newStore = func() store.Store {
-			searchLayer := searchlayer.NewSearchLayer(
+			newLayer := searchlayer.NewSearchLayer(
 				cachelayer.NewCacheLayer(
 					s.sqlStore,
 					s.Config(),
@@ -100,9 +100,9 @@ func NewServer(options ...Option) (*Server, error) {
 				s.Config(),
 			)
 
-			searchLayer.SetupIndexes()
+			newLayer.SetupIndexes()
 
-			return searchlayer
+			return newLayer
 		}
 	}
 	s.Store = s.newStore()
@@ -119,6 +119,8 @@ func NewServer(options ...Option) (*Server, error) {
 		}
 		s.EmailBatching.startJobs()
 	}
+
+	s.FakeApp().InitMigrations()
 
 	return s, nil
 }

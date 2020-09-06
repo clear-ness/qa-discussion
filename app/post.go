@@ -6,19 +6,20 @@ import (
 
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
+	"github.com/clear-ness/qa-discussion/store/searchlayer"
 	"github.com/clear-ness/qa-discussion/utils"
 )
 
-func (a *App) GetSinglePost(postId string) (*model.Post, *model.AppError) {
-	return a.Srv.Store.Post().GetSingle(postId)
+func (a *App) GetSinglePost(postId string, includeDeleted bool) (*model.Post, *model.AppError) {
+	return a.Srv.Store.Post().GetSingle(postId, includeDeleted)
 }
 
 func (a *App) GetSinglePostByType(postId string, postType string) (*model.Post, *model.AppError) {
 	return a.Srv.Store.Post().GetSingleByType(postId, postType)
 }
 
-func (a *App) GetPostCountByUserId(userId string, postType string, teamId string) (int64, *model.AppError) {
-	return a.Srv.Store.Post().GetPostCountByUserId(postType, userId, teamId)
+func (a *App) GetPostCount(userId string, postType string, teamId string) (int64, *model.AppError) {
+	return a.Srv.Store.Post().GetPostCount(postType, userId, teamId, 0, 0)
 }
 
 func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post, *model.AppError) {
@@ -54,6 +55,7 @@ func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post,
 		DownVotes:   0,
 		AnswerCount: 0,
 		FlagCount:   0,
+		Views:       0,
 		DeleteAt:    0,
 	}
 
@@ -97,7 +99,24 @@ func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post,
 		}
 	}
 
+	if post.TeamId != "" {
+		a.tryWebhook(post, user)
+	}
+
 	return rpost, nil
+}
+
+func (a *App) tryWebhook(post *model.Post, user *model.User) {
+	a.Srv.Go(func() {
+		team, err := a.Srv.Store.Team().Get(post.TeamId)
+		if err != nil || team.DeleteAt > 0 {
+			return
+		}
+
+		if err := a.handleWebhookEvents(post, team, user); err != nil {
+			mlog.Error(err.Error())
+		}
+	})
 }
 
 func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
@@ -142,6 +161,7 @@ func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
 		DownVotes:   0,
 		AnswerCount: 0,
 		FlagCount:   0,
+		Views:       0,
 		DeleteAt:    0,
 	}
 
@@ -151,11 +171,15 @@ func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
 		return nil, err
 	}
 
+	if post.TeamId != "" {
+		a.tryWebhook(post, user)
+	}
+
 	return rpost, nil
 }
 
 func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
-	parent, err := a.Srv.Store.Post().GetSingle(post.ParentId)
+	parent, err := a.Srv.Store.Post().GetSingle(post.ParentId, false)
 	if err != nil {
 		mlog.Error("Couldn't save the comment", mlog.Err(err))
 		return nil, err
@@ -197,6 +221,7 @@ func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
 		DownVotes:   0,
 		AnswerCount: 0,
 		FlagCount:   0,
+		Views:       0,
 		DeleteAt:    0,
 	}
 
@@ -206,7 +231,7 @@ func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
 		return nil, err
 	}
 
-	rpost, err = a.Srv.Store.Post().GetSingle(rpost.Id)
+	rpost, err = a.Srv.Store.Post().GetSingle(rpost.Id, false)
 	if err != nil {
 		mlog.Error("Couldn't get post for inbox messages", mlog.Err(err))
 		return rpost, nil
@@ -218,12 +243,16 @@ func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
 		return rpost, nil
 	}
 
+	if post.TeamId != "" {
+		a.tryWebhook(post, user)
+	}
+
 	return rpost, nil
 }
 
 // users can comment reply to participants of a comment thread or the author of the post
 func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bool) *model.AppError {
-	parent, err := a.Srv.Store.Post().GetSingle(post.ParentId)
+	parent, err := a.Srv.Store.Post().GetSingle(post.ParentId, false)
 	if err != nil {
 		return model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.get_single.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
@@ -231,7 +260,7 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 		return model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.get_single.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	root, err := a.Srv.Store.Post().GetSingle(post.RootId)
+	root, err := a.Srv.Store.Post().GetSingle(post.RootId, false)
 	if err != nil {
 		return model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.get_single.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
@@ -361,7 +390,7 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 }
 
 func (a *App) GetPostWithMetadata(postId string) (*model.Post, *model.AppError) {
-	post, err := a.GetSinglePost(postId)
+	post, err := a.GetSinglePost(postId, false)
 	if err != nil {
 		return nil, err
 	}
@@ -430,6 +459,7 @@ func (a *App) CheckVoted(posts model.Posts) (model.Posts, *model.AppError) {
 		return posts, nil
 	}
 
+	// TODO: use GetVoteTypesForPost
 	for _, post := range posts {
 		if model.IsQuestionOrAnswer(post.Type) {
 			upVote, err := a.GetVote(a.Session.UserId, post.Id, model.VOTE_TYPE_UP_VOTE)
@@ -596,7 +626,7 @@ func (a *App) SearchPosts(terms string, sortType string, getParent bool, limitCo
 }
 
 func (a *App) UpdatePost(post *model.Post) (*model.Post, *model.AppError) {
-	oldPost, err := a.Srv.Store.Post().GetSingle(post.Id)
+	oldPost, err := a.Srv.Store.Post().GetSingle(post.Id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -652,7 +682,7 @@ func (a *App) UpdatePost(post *model.Post) (*model.Post, *model.AppError) {
 	}
 
 	if edited && rpost.Type == model.POST_TYPE_COMMENT {
-		rpost, err = a.Srv.Store.Post().GetSingle(rpost.Id)
+		rpost, err = a.Srv.Store.Post().GetSingle(rpost.Id, false)
 		if err != nil {
 			mlog.Error("Couldn't get post for inbox messages", mlog.Err(err))
 			return rpost, nil
@@ -718,12 +748,37 @@ func (a *App) DeletePost(post *model.Post, deleteByID string) (*model.Post, *mod
 	return post, nil
 }
 
+func (a *App) DeletePostForcely(post *model.Post, deleteByID string) (*model.Post, *model.AppError) {
+	switch post.Type {
+	case model.POST_TYPE_QUESTION:
+		if err := a.Srv.Store.Post().DeleteQuestion(post.Id, model.GetMillis(), deleteByID); err != nil {
+			return nil, err
+		}
+	case model.POST_TYPE_ANSWER:
+		if err := a.Srv.Store.Post().DeleteAnswer(post.Id, model.GetMillis(), deleteByID); err != nil {
+			return nil, err
+		}
+	case model.POST_TYPE_COMMENT:
+		if err := a.Srv.Store.Post().DeleteComment(post.Id, model.GetMillis(), deleteByID); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, model.NewAppError("DeletePost", "api.post.delete.type.app_error", nil, "", http.StatusInternalServerError)
+	}
+
+	a.Srv.Go(func() {
+		a.DeletePostFiles(post)
+	})
+
+	return post, nil
+}
+
 func (a *App) SelectBestAnswer(postId, bestId string) *model.AppError {
 	return a.Srv.Store.Post().SelectBestAnswer(postId, bestId)
 }
 
 func (a *App) UpVotePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't upvote the post", mlog.Err(err))
 		return err
@@ -750,7 +805,7 @@ func (a *App) UpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("UpVotePost", "api.post.upvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	err = a.Srv.Store.Post().UpVotePost(postId, userId)
+	_, err = a.Srv.Store.Post().UpVotePost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -759,7 +814,7 @@ func (a *App) UpVotePost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) CancelUpVotePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't cancel upvote the post", mlog.Err(err))
 		return err
@@ -786,7 +841,7 @@ func (a *App) CancelUpVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelUpVotePost", "api.post.cancel_upvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	err = a.Srv.Store.Post().CancelUpVotePost(postId, userId)
+	_, err = a.Srv.Store.Post().CancelUpVotePost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -795,7 +850,7 @@ func (a *App) CancelUpVotePost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) DownVotePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't downvote the post", mlog.Err(err))
 		return err
@@ -822,7 +877,7 @@ func (a *App) DownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("DownVotePost", "api.post.downvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	err = a.Srv.Store.Post().DownVotePost(postId, userId)
+	_, err = a.Srv.Store.Post().DownVotePost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -831,7 +886,7 @@ func (a *App) DownVotePost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) CancelDownVotePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't cancel cancel downvote the post", mlog.Err(err))
 		return err
@@ -858,7 +913,7 @@ func (a *App) CancelDownVotePost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelDownVotePost", "api.post.cancel_downvote.user_suspending.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	err = a.Srv.Store.Post().CancelDownVotePost(postId, userId)
+	_, err = a.Srv.Store.Post().CancelDownVotePost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -867,7 +922,7 @@ func (a *App) CancelDownVotePost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) FlagPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't flag the post", mlog.Err(err))
 		return err
@@ -877,7 +932,7 @@ func (a *App) FlagPost(postId string, userId string) *model.AppError {
 		return model.NewAppError("FlagPost", "api.post.flag.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	err = a.Srv.Store.Post().FlagPost(postId, userId)
+	_, err = a.Srv.Store.Post().FlagPost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -886,7 +941,7 @@ func (a *App) FlagPost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) CancelFlagPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't cancel flag the post", mlog.Err(err))
 		return err
@@ -895,7 +950,7 @@ func (a *App) CancelFlagPost(postId string, userId string) *model.AppError {
 		return model.NewAppError("CancelFlagPost", "api.post.cancel_flag.get.app_error", nil, "", http.StatusInternalServerError)
 	}
 
-	err = a.Srv.Store.Post().CancelFlagPost(postId, userId)
+	_, err = a.Srv.Store.Post().CancelFlagPost(postId, userId)
 	if err != nil {
 		return err
 	}
@@ -904,7 +959,7 @@ func (a *App) CancelFlagPost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) LockPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't lock the post", mlog.Err(err))
 		return err
@@ -927,7 +982,7 @@ func (a *App) LockPost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) CancelLockPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't cancel lock the post", mlog.Err(err))
 		return err
@@ -954,7 +1009,7 @@ func (a *App) CancelLockPost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) ProtectPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't protect the post", mlog.Err(err))
 		return err
@@ -977,7 +1032,7 @@ func (a *App) ProtectPost(postId string, userId string) *model.AppError {
 }
 
 func (a *App) CancelProtectPost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't cancel protect the post", mlog.Err(err))
 		return err
@@ -1005,6 +1060,43 @@ func (a *App) DeletePostFiles(post *model.Post) {
 	}
 }
 
-func (a *App) ViewPost(post *model.Post, userId string, ipAddress string) {
-	return a.Srv.Store.Post().ViewPost(post.Id, userId, ipAddress, 1)
+func (a *App) ViewPost(post *model.Post, userId string, ipAddress string) *model.AppError {
+	return a.Srv.Store.Post().ViewPost(post.Id, post.TeamId, userId, ipAddress, 1)
+}
+
+func (a *App) RelatedPosts(post *model.Post) ([]*model.RelatedPostSearchResult, *model.AppError) {
+	term := post.Title + " " + post.Tags
+
+	return a.Srv.Store.Post().RelatedSearch(term, 10)
+}
+
+func (a *App) HotPosts(interval string, teamId string) (model.Posts, *model.AppError) {
+	postIds, err := a.Srv.Store.Post().HotSearch(interval, teamId, searchlayer.HOT_POST_SEARCH_MAX_COUNT*2)
+	if err != nil {
+		return nil, model.NewAppError("HotPosts", "api.post.hot_posts.hot_search.app_error", nil, "", http.StatusInternalServerError)
+	}
+
+	posts, err := a.Srv.Store.Post().GetPostsByIds(postIds)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []*model.Post
+	for _, postId := range postIds {
+		for _, post := range posts {
+			if postId == post.Id {
+				results = append(results, post)
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func (a *App) GetCurrentRevisionForPost(postId string, teamId string) (int64, *model.AppError) {
+	return a.Srv.Store.Post().GetCurrentRevisionForPost(postId, teamId)
+}
+
+func (a *App) GetRevisionPost(postId string, teamId string, offset int) (*model.Post, *model.AppError) {
+	return a.Srv.Store.Post().GetRevisionPost(postId, teamId, offset)
 }

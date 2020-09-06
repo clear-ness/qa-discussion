@@ -23,6 +23,7 @@ func NewRedisBackend(settings *model.CacheSettings) *RedisCacheBackend {
 }
 
 // ttlは毎回変更される。
+// expire 0 はttl無し、と言う意味。
 func (b *RedisCacheBackend) Set(key string, value interface{}, expireSeconds int) error {
 	var ctx = context.Background()
 	rdb := redis.NewClient(&redis.Options{
@@ -50,6 +51,62 @@ func (b *RedisCacheBackend) Get(key string) (string, error) {
 	return rdb.Get(ctx, key).Result()
 }
 
+func (b *RedisCacheBackend) HSet(key string, values map[string]interface{}) (int64, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.HSet(ctx, key, values).Result()
+}
+
+func (b *RedisCacheBackend) HGetAll(key string) (map[string]string, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.HGetAll(ctx, key).Result()
+}
+
+// 重複を許さない文字列集合
+func (b *RedisCacheBackend) SAdd(key string, members []string) (int64, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.SAdd(ctx, key, members).Result()
+}
+
+func (b *RedisCacheBackend) SMembers(key string) ([]string, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.SMembers(ctx, key).Result()
+}
+
+func (b *RedisCacheBackend) Del(keys []string) (int64, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.Del(ctx, keys...).Result()
+}
+
 func (b *RedisCacheBackend) Exists(key string) (int64, error) {
 	var ctx = context.Background()
 	rdb := redis.NewClient(&redis.Options{
@@ -71,4 +128,15 @@ func (b *RedisCacheBackend) IncrBy(key string, count int) (int64, error) {
 	})
 
 	return rdb.IncrBy(ctx, key, int64(count)).Result()
+}
+
+func (b *RedisCacheBackend) FlushAll() (string, error) {
+	var ctx = context.Background()
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     b.endpoint,
+		Password: b.password,
+		DB:       b.db,
+	})
+
+	return rdb.FlushAll(ctx).Result()
 }

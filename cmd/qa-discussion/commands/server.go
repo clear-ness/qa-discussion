@@ -7,6 +7,7 @@ import (
 
 	"github.com/clear-ness/qa-discussion/api"
 	"github.com/clear-ness/qa-discussion/app"
+	"github.com/clear-ness/qa-discussion/web"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,7 @@ func runServer() error {
 	defer server.Shutdown()
 
 	api.Init(server.AppOptions, server.Router)
+	web.New(server, server.AppOptions, server.Router)
 
 	serverErr := server.Start()
 	if serverErr != nil {

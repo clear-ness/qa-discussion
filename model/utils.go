@@ -9,7 +9,9 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/mail"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -488,4 +490,24 @@ func IsValidGroupIdentifier(s string) bool {
 func IsValidAlphaNumHyphenUnderscore(s string) bool {
 	validSimpleAlphaNumHyphenUnderscore := regexp.MustCompile(`^[a-zA-Z0-9\-_]+$`)
 	return validSimpleAlphaNumHyphenUnderscore.MatchString(s)
+}
+
+func IsValidNumberString(value string) bool {
+	if _, err := strconv.Atoi(value); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func IsValidHttpUrl(rawUrl string) bool {
+	if strings.Index(rawUrl, "http://") != 0 && strings.Index(rawUrl, "https://") != 0 {
+		return false
+	}
+
+	if _, err := url.ParseRequestURI(rawUrl); err != nil {
+		return false
+	}
+
+	return true
 }

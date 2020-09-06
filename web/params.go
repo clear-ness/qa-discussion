@@ -15,31 +15,37 @@ const (
 )
 
 type Params struct {
-	UserId          string
-	PostId          string
-	BestId          string
-	Page            int
-	PerPage         int
-	FromDate        int64
-	ToDate          int64
-	Min             *int
-	Max             *int
-	NoAnswers       bool
-	SortType        string
-	Body            string
-	InboxMessageId  string
-	SuspendSpanType string
-	UserType        string
-	UserName        string
-	Filename        string
-	FileId          string
-	InboxInterval   string
-	TagName         string
-	TimeZoneOffset  *int
-	TeamId          string
-	GroupId         string
-	CollectionId    string
-	Permanent       bool
+	UserId                  string
+	PostId                  string
+	BestId                  string
+	Page                    int
+	PerPage                 int
+	FromDate                int64
+	ToDate                  int64
+	Min                     *int
+	Max                     *int
+	NoAnswers               bool
+	SortType                string
+	Body                    string
+	InboxMessageId          string
+	SuspendSpanType         string
+	UserType                string
+	UserName                string
+	Filename                string
+	FileId                  string
+	InboxInterval           string
+	TagName                 string
+	TimeZoneOffset          *int
+	TeamId                  string
+	GroupId                 string
+	CollectionId            string
+	Permanent               bool
+	HotPostsInterval        string
+	RevisionId              string
+	ReviewType              string
+	TopUsersOrPostsInterval string
+	HookId                  string
+	AppId                   string
 }
 
 func ParamsFromRequest(r *http.Request) *Params {
@@ -187,6 +193,51 @@ func ParamsFromRequest(r *http.Request) *Params {
 
 	if val, err := strconv.ParseBool(query.Get("permanent")); err == nil {
 		params.Permanent = val
+	}
+
+	if val := query.Get("hot_posts_interval"); len(val) > 0 {
+		switch val {
+		case model.HOT_POSTS_INTERVAL_DAYS:
+			params.HotPostsInterval = model.HOT_POSTS_INTERVAL_DAYS
+		case model.HOT_POSTS_INTERVAL_WEEK:
+			params.HotPostsInterval = model.HOT_POSTS_INTERVAL_WEEK
+		case model.HOT_POSTS_INTERVAL_MONTH:
+			params.HotPostsInterval = model.HOT_POSTS_INTERVAL_MONTH
+		}
+	}
+
+	if val := query.Get("top_interval"); len(val) > 0 {
+		switch val {
+		case model.USER_POINT_HISTORY_INTERVAL_DAY:
+			params.TopUsersOrPostsInterval = model.USER_POINT_HISTORY_INTERVAL_DAY
+		case model.USER_POINT_HISTORY_INTERVAL_WEEK:
+			params.TopUsersOrPostsInterval = model.USER_POINT_HISTORY_INTERVAL_WEEK
+		case model.USER_POINT_HISTORY_INTERVAL_MONTH:
+			params.TopUsersOrPostsInterval = model.USER_POINT_HISTORY_INTERVAL_MONTH
+		}
+	}
+
+	if val, ok := props["revision_id"]; ok {
+		params.RevisionId = val
+	}
+
+	if val := query.Get("review_type"); len(val) > 0 {
+		switch val {
+		case model.VOTE_TYPE_REVIEW:
+			params.ReviewType = model.VOTE_TYPE_REVIEW
+		case model.VOTE_TYPE_SYSTEM:
+			params.ReviewType = model.VOTE_TYPE_SYSTEM
+		case model.VOTE_TYPE_FLAG:
+			params.ReviewType = model.VOTE_TYPE_FLAG
+		}
+	}
+
+	if val, ok := props["hook_id"]; ok {
+		params.HookId = val
+	}
+
+	if val, ok := props["app_id"]; ok {
+		params.AppId = val
 	}
 
 	return params

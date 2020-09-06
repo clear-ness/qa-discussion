@@ -74,7 +74,11 @@ type SqlSupplierStores struct {
 	inboxMessage        store.InboxMessageStore
 	fileInfo            store.FileInfoStore
 	notificationSetting store.NotificationSettingStore
+	postViewsHistory    store.PostViewsHistoryStore
+	webhook             store.WebhookStore
+	webhooksHistory     store.WebhooksHistoryStore
 	audit               store.AuditStore
+	oauth               store.OAuthStore
 }
 
 type SqlSupplier struct {
@@ -110,7 +114,11 @@ func NewSqlSupplier(settings model.SqlSettings) *SqlSupplier {
 	supplier.stores.inboxMessage = NewSqlInboxMessageStore(supplier)
 	supplier.stores.fileInfo = NewSqlFileInfoStore(supplier)
 	supplier.stores.notificationSetting = NewSqlNotificationSettingStore(supplier)
+	supplier.stores.webhook = NewSqlWebhookStore(supplier)
+	supplier.stores.webhooksHistory = NewSqlWebhooksHistoryStore(supplier)
+	supplier.stores.postViewsHistory = NewSqlPostViewsHistoryStore(supplier)
 	supplier.stores.audit = NewSqlAuditStore(supplier)
+	supplier.stores.oauth = NewSqlOAuthStore(supplier)
 
 	return supplier
 }
@@ -382,8 +390,24 @@ func (ss *SqlSupplier) NotificationSetting() store.NotificationSettingStore {
 	return ss.stores.notificationSetting
 }
 
+func (ss *SqlSupplier) PostViewsHistory() store.PostViewsHistoryStore {
+	return ss.stores.postViewsHistory
+}
+
+func (ss *SqlSupplier) Webhook() store.WebhookStore {
+	return ss.stores.webhook
+}
+
+func (ss *SqlSupplier) WebhooksHistory() store.WebhooksHistoryStore {
+	return ss.stores.webhooksHistory
+}
+
 func (ss *SqlSupplier) Audit() store.AuditStore {
 	return ss.stores.audit
+}
+
+func (ss *SqlSupplier) OAuth() store.OAuthStore {
+	return ss.stores.oauth
 }
 
 type JSONSerializable interface {

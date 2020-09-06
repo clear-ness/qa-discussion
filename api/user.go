@@ -187,14 +187,14 @@ func getUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	questionCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_QUESTION, "")
+	questionCount, err := c.App.GetPostCount(user.Id, model.POST_TYPE_QUESTION, "")
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
 		user.QuestionCount = questionCount
 	}
 
-	answerCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_ANSWER, "")
+	answerCount, err := c.App.GetPostCount(user.Id, model.POST_TYPE_ANSWER, "")
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
@@ -236,14 +236,14 @@ func getTeamUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	questionCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_QUESTION, member.TeamId)
+	questionCount, err := c.App.GetPostCount(user.Id, model.POST_TYPE_QUESTION, member.TeamId)
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
 		user.QuestionCount = questionCount
 	}
 
-	answerCount, err := c.App.GetPostCountByUserId(user.Id, model.POST_TYPE_ANSWER, member.TeamId)
+	answerCount, err := c.App.GetPostCount(user.Id, model.POST_TYPE_ANSWER, member.TeamId)
 	if err != nil {
 		mlog.Error(err.Error())
 	} else {
@@ -553,6 +553,13 @@ func updateUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		c.Err = err
 		return
+	}
+
+	if c.App.Session.IsOAuth {
+		if oldUser.Email != user.Email {
+			c.SetPermissionError(model.PERMISSION_EDIT_OTHER_USERS)
+			return
+		}
 	}
 
 	// If eMail update is attempted by the currently logged in user, check if correct password was provided

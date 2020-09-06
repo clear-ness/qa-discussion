@@ -1,7 +1,9 @@
 package api
 
 import (
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/clear-ness/qa-discussion/model"
 )
@@ -41,6 +43,15 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Post.Handle("/linked", api.ApiHandler(getLinkedForPost)).Methods("GET")
 	api.BaseRoutes.PostForTeam.Handle("/linked", api.ApiSessionRequired(getLinkedForTeamPost)).Methods("GET")
 
+	api.BaseRoutes.RevisionsForPost.Handle("", api.ApiHandler(getRevisionsForPost)).Methods("GET")
+	api.BaseRoutes.RevisionsForPost.Handle("/total_count", api.ApiHandler(getCurrentRevisionForPost)).Methods("GET")
+	api.BaseRoutes.RevisionForPost.Handle("", api.ApiHandler(getRevisionPost)).Methods("GET")
+
+	api.BaseRoutes.RevisionsForPostForTeam.Handle("", api.ApiHandler(getRevisionsForTeamPost)).Methods("GET")
+	api.BaseRoutes.RevisionsForPostForTeam.Handle("/total_count", api.ApiHandler(getCurrentRevisionForTeamPost)).Methods("GET")
+	api.BaseRoutes.RevisionForPostForTeam.Handle("", api.ApiHandler(getRevisionTeamPost)).Methods("GET")
+
+	api.BaseRoutes.Post.Handle("", api.ApiSessionRequired(updatePost)).Methods("PUT")
 	api.BaseRoutes.Post.Handle("", api.ApiSessionRequired(deletePost)).Methods("DELETE")
 
 	api.BaseRoutes.Post.Handle("/best", api.ApiSessionRequired(selectBestAnswer)).Methods("POST")
@@ -53,6 +64,7 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Post.Handle("/flag", api.ApiSessionRequired(flagPost)).Methods("POST")
 	api.BaseRoutes.Post.Handle("/cancel_flag", api.ApiSessionRequired(cancelFlagPost)).Methods("POST")
 
+	// TODO: sort by post.views
 	api.BaseRoutes.Posts.Handle("/search", api.ApiHandler(searchPosts)).Methods("POST")
 	api.BaseRoutes.PostsForTeam.Handle("/search", api.ApiSessionRequired(searchPostsForTeam)).Methods("POST")
 
@@ -62,14 +74,11 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Posts.Handle("/similar", api.ApiHandler(similarPosts)).Methods("POST")
 	api.BaseRoutes.PostsForTeam.Handle("/similar", api.ApiSessionRequired(similarPostsForTeam)).Methods("POST")
 
-	// TODO: related
-	// similarに近いが、アルゴリズムは非公開かつ可変らしい。
-	// → ElasticSearch のmore like this queryで実装
-	// https://meta.stackexchange.com/questions/20473/how-are-related-questions-selected
+	api.BaseRoutes.Posts.Handle("/related", api.ApiHandler(relatedPosts)).Methods("POST")
 
-	// TODO: Hot
 	// questions with the most views, answers, and votes over the last few days, or a week, or a month
-	// https://meta.stackexchange.com/questions/11602/what-formula-should-be-used-to-determine-hot-questions
+	api.BaseRoutes.Posts.Handle("/hot", api.ApiHandler(hotPosts)).Methods("GET")
+	api.BaseRoutes.PostsForTeam.Handle("/hot", api.ApiSessionRequired(hotPostsForTeam)).Methods("GET")
 
 	api.BaseRoutes.PostsForUser.Handle("/questions", api.ApiHandler(getQuestionsForUser)).Methods("GET")
 	api.BaseRoutes.TeamForUser.Handle("/questions", api.ApiSessionRequired(getQuestionsForTeamUser)).Methods("GET")
@@ -207,6 +216,129 @@ func getLinkedForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
 	link := model.GetLink(c.App.GetSiteURL(), c.Params.PostId)
 	options.Link = link
 	getPosts(c, w, r, options, false, false, false, true)
+}
+
+func getRevisionsForPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	sort := c.Params.SortType
+	if sort != model.POST_SORT_TYPE_ACTIVE {
+		c.SetInvalidUrlParam("sort")
+		return
+	}
+
+	options := &model.GetPostsOptions{IncludeDeleted: true, OriginalId: c.Params.PostId}
+
+	getPosts(c, w, r, options, false, false, false, false)
+}
+
+func getCurrentRevisionForPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	count, err := c.App.GetCurrentRevisionForPost(c.Params.PostId, "")
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	countStr := strconv.FormatInt(count, 10)
+	w.Write([]byte(model.MapToJson(map[string]string{"post_id": c.Params.PostId, "current_revision": countStr})))
+}
+
+func getRevisionPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequirePostId().RequireRevisionId()
+	if c.Err != nil {
+		return
+	}
+
+	revInt, err := strconv.Atoi(c.Params.RevisionId)
+	if err != nil || revInt < 1 || revInt > math.MaxUint16 {
+		c.SetInvalidUrlParam("revision_id")
+		return
+	}
+
+	post, err2 := c.App.GetRevisionPost(c.Params.PostId, "", revInt-1)
+	if err2 != nil {
+		c.Err = err2
+		return
+	}
+
+	w.Write([]byte(post.ToJson()))
+}
+
+func getRevisionsForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	sort := c.Params.SortType
+	if sort != model.POST_SORT_TYPE_ACTIVE {
+		c.SetInvalidUrlParam("sort")
+		return
+	}
+
+	options := &model.GetPostsOptions{TeamId: c.Params.TeamId, IncludeDeleted: true, OriginalId: c.Params.PostId}
+
+	getPosts(c, w, r, options, false, false, false, false)
+}
+
+func getCurrentRevisionForTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	count, err := c.App.GetCurrentRevisionForPost(c.Params.PostId, c.Params.TeamId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	countStr := strconv.FormatInt(count, 10)
+	w.Write([]byte(model.MapToJson(map[string]string{"post_id": c.Params.PostId, "current_revision": countStr})))
+}
+
+func getRevisionTeamPost(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId().RequirePostId().RequireRevisionId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	revInt, err := strconv.Atoi(c.Params.RevisionId)
+	if err != nil || revInt < 1 || revInt > math.MaxUint16 {
+		c.SetInvalidUrlParam("revision_id")
+		return
+	}
+
+	post, err2 := c.App.GetRevisionPost(c.Params.PostId, c.Params.TeamId, revInt-1)
+	if err2 != nil {
+		c.Err = err2
+		return
+	}
+
+	w.Write([]byte(post.ToJson()))
 }
 
 func getPosts(c *Context, w http.ResponseWriter, r *http.Request, options *model.GetPostsOptions, getComments bool, getParent bool, checkVoted bool, limitContent bool) {
@@ -504,7 +636,7 @@ func updatePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	originalPost, err := c.App.GetSinglePost(c.Params.PostId)
+	originalPost, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_EDIT_POST)
 		return
@@ -560,7 +692,7 @@ func deletePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_DELETE_POST)
 		return
@@ -648,7 +780,7 @@ func upvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
@@ -680,7 +812,7 @@ func cancelUpvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
@@ -712,7 +844,7 @@ func downvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
@@ -744,7 +876,7 @@ func cancelDownvotePost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_VOTE_POST)
 		return
@@ -776,7 +908,7 @@ func flagPost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_FLAG_POST)
 		return
@@ -808,7 +940,7 @@ func cancelFlagPost(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	post, err := c.App.GetSinglePost(c.Params.PostId)
+	post, err := c.App.GetSinglePost(c.Params.PostId, false)
 	if err != nil {
 		c.SetPermissionError(model.PERMISSION_FLAG_POST)
 		return
@@ -1013,6 +1145,77 @@ func similarPostsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	getPosts(c, w, r, options, false, false, false, true)
+}
+
+func relatedPosts(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequirePostId()
+	if c.Err != nil {
+		return
+	}
+	// TODO: ES検索が有効な場合のみ、related search APIを生やす。
+
+	post, err := c.App.GetPost(c.Params.PostId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if post.Type != model.POST_TYPE_QUESTION || post.Title == "" || post.TeamId != "" {
+		c.SetInvalidParam("post")
+		return
+	}
+
+	var results []*model.RelatedPostSearchResult
+	if results, err = c.App.RelatedPosts(post); err != nil {
+		c.Err = err
+		return
+	}
+
+	data := model.RelatedPostSearchResultsWithCount{RelatedPostSearchResults: results, TotalCount: int64(len(results))}
+	w.Write([]byte(data.ToJson()))
+}
+
+func hotPosts(c *Context, w http.ResponseWriter, r *http.Request) {
+	// TODO: このAPI自体がconfig.cacheEnableがtrueである前提。
+	// そうで無ければ弾く。
+
+	c.RequireHotPostsInterval()
+	if c.Err != nil {
+		return
+	}
+
+	posts, err := c.App.HotPosts(c.Params.HotPostsInterval, "")
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	data := model.PostsWithCount{Posts: posts, TotalCount: int64(len(posts))}
+	w.Write([]byte(data.ToJson()))
+}
+
+func hotPostsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	// TODO: このAPI自体がconfig.cacheEnableがtrueである前提。
+	// そうで無ければ弾く。
+
+	c.RequireHotPostsInterval().RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_VIEW_TEAM_POST) {
+		c.SetPermissionError(model.PERMISSION_VIEW_TEAM_POST)
+		return
+	}
+
+	posts, err := c.App.HotPosts(c.Params.HotPostsInterval, c.Params.TeamId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	data := model.PostsWithCount{Posts: posts, TotalCount: int64(len(posts))}
+	w.Write([]byte(data.ToJson()))
 }
 
 func getQuestionsForUser(c *Context, w http.ResponseWriter, r *http.Request) {

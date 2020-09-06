@@ -224,3 +224,62 @@ func (c *Context) RequireCollectionId() *Context {
 
 	return c
 }
+
+func (c *Context) RequireHotPostsInterval() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.HotPostsInterval) == 0 {
+		c.SetInvalidUrlParam("hot_posts_interval")
+	}
+
+	return c
+}
+
+func (c *Context) RequireRevisionId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if !model.IsValidNumberString(c.Params.RevisionId) {
+		c.SetInvalidUrlParam("revision_id")
+	}
+
+	return c
+}
+
+func (c *Context) RequireTopInterval() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.TopUsersOrPostsInterval) == 0 {
+		c.SetInvalidUrlParam("top_interval")
+	}
+
+	return c
+}
+
+func (c *Context) RequireHookId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.HookId) != 26 {
+		c.SetInvalidUrlParam("hook_id")
+	}
+
+	return c
+}
+
+func (c *Context) RequireAppId() *Context {
+	if c.Err != nil {
+		return c
+	}
+
+	if len(c.Params.AppId) != 26 {
+		c.SetInvalidUrlParam("app_id")
+	}
+	return c
+}

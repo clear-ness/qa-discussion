@@ -79,6 +79,8 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				c.RemoveSessionCookie(w, r)
 				c.Err = model.NewAppError("ServeHTTP", "api.context.session_expired.app_error", nil, "token="+token, http.StatusUnauthorized)
 			}
+		} else if !session.IsOAuth && tokenLocation == app.TokenLocationQueryString {
+			c.Err = model.NewAppError("ServeHTTP", "api.context.token_provided.app_error", nil, "token="+token, http.StatusUnauthorized)
 		} else {
 			c.App.Session = *session
 		}
@@ -118,7 +120,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			c.Err.Where = ""
 		}
 
-		if IsApiCall(c.App, r) {
+		if IsApiCall(c.App, r) || IsOAuthApiCall(c.App, r) {
 			w.WriteHeader(c.Err.StatusCode)
 			w.Write([]byte(c.Err.ToJson()))
 		}
@@ -144,4 +146,46 @@ func (h *Handler) checkCSRFToken(c *Context, r *http.Request, token string, toke
 	}
 
 	return csrfCheckNeeded, csrfCheckPassed
+}
+
+// session requires, and csrfCheckNeeded
+func (w *Web) ApiSessionRequired(h func(*Context, http.ResponseWriter, *http.Request)) http.Handler {
+	handler := &Handler{
+		GetGlobalAppOptions: w.GetGlobalAppOptions,
+		HandleFunc:          h,
+		HandlerName:         GetHandlerName(h),
+		RequireSession:      true,
+		TrustRequester:      false,
+		IsStatic:            false,
+	}
+
+	return handler
+}
+
+// session not requires, and csrfCheckNeeded
+func (w *Web) ApiHandler(h func(*Context, http.ResponseWriter, *http.Request)) http.Handler {
+	handler := &Handler{
+		GetGlobalAppOptions: w.GetGlobalAppOptions,
+		HandleFunc:          h,
+		HandlerName:         GetHandlerName(h),
+		RequireSession:      false,
+		TrustRequester:      false,
+		IsStatic:            false,
+	}
+
+	return handler
+}
+
+// session not requires, and not csrfCheckNeeded
+func (w *Web) ApiHandlerTrustRequester(h func(*Context, http.ResponseWriter, *http.Request)) http.Handler {
+	handler := &Handler{
+		GetGlobalAppOptions: w.GetGlobalAppOptions,
+		HandleFunc:          h,
+		HandlerName:         GetHandlerName(h),
+		RequireSession:      false,
+		TrustRequester:      true,
+		IsStatic:            false,
+	}
+
+	return handler
 }

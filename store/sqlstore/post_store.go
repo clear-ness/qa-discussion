@@ -24,13 +24,14 @@ type SqlPostStore struct {
 }
 
 func tagSliceColumns() []string {
-	return []string{"Content", "TeamId", "PostCount", "CreateAt", "UpdateAt"}
+	return []string{"Content", "TeamId", "Type", "PostCount", "CreateAt", "UpdateAt"}
 }
 
 func tagToSlice(tag *model.Tag) []interface{} {
 	return []interface{}{
 		tag.Content,
 		tag.TeamId,
+		tag.Type,
 		tag.PostCount,
 		tag.CreateAt,
 		tag.UpdateAt,
@@ -50,13 +51,34 @@ func NewSqlPostStore(sqlStore store.Store) store.PostStore {
 	return s
 }
 
+func (s *SqlPostStore) CreateSystemReview(post *model.Post, userId string, tagContents string, time int64) *model.AppError {
+	review := &model.Vote{
+		PostId:       post.Id,
+		UserId:       userId,
+		Type:         model.VOTE_TYPE_SYSTEM,
+		Tags:         tagContents,
+		TeamId:       post.TeamId,
+		FirstPostRev: 1,
+		CreateAt:     time,
+	}
+
+	if err := s.GetMaster().Insert(review); err != nil {
+		return model.NewAppError("SqlPostStore.CreateSystemReview", "store.sql_post.create_system_review.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return nil
+}
+
 func (s *SqlPostStore) SaveQuestion(post *model.Post) (*model.Post, *model.AppError) {
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
 		return nil, model.NewAppError("SqlPostStore.SaveQuestion", "store.sql_post.save_question.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
+
+	curTime := model.GetMillis()
+
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.saveQuestion(transaction, post); upsertErr != nil {
+	if upsertErr := s.saveQuestion(transaction, post, curTime); upsertErr != nil {
 		return nil, upsertErr
 	}
 
@@ -64,10 +86,14 @@ func (s *SqlPostStore) SaveQuestion(post *model.Post) (*model.Post, *model.AppEr
 		return nil, model.NewAppError("SqlPostStore.SaveQuestion", "store.sql_post.save_question.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
+	if count, err := s.GetPostCount("", post.UserId, post.TeamId, 0, 0); err == nil && count <= 1 {
+		s.CreateSystemReview(post, "", model.SYSTEM_TAG_FIRST_POSTS, curTime)
+	}
+
 	return post, nil
 }
 
-func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.Post) *model.AppError {
+func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.Post, curTime int64) *model.AppError {
 	if len(post.Id) > 0 {
 		return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.existing.app_error", nil, "id="+post.Id, http.StatusBadRequest)
 	}
@@ -82,8 +108,6 @@ func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.P
 	if err := transaction.Insert(post); err != nil {
 		return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.app_error", nil, "id="+post.Id+", "+err.Error(), http.StatusInternalServerError)
 	}
-
-	curTime := model.GetMillis()
 
 	addedTags := strings.Fields(post.Tags)
 
@@ -113,14 +137,23 @@ func (s *SqlPostStore) saveQuestion(transaction *gorp.Transaction, post *model.P
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_CREATE_QUESTION,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     post.Tags,
 		Points:   model.USER_POINT_FOR_CREATE_QUESTION,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.saveQuestion", "store.sql_post.save_question.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
+}
+
+func (s *SqlPostStore) SaveUserPointHistory(history *model.UserPointHistory) (*model.UserPointHistory, *model.AppError) {
+	if err := s.GetMaster().Insert(history); err != nil {
+		return nil, model.NewAppError("SqlPostStore.SaveUserPointHistory", "store.sql_post.save_user_point_history.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return history, nil
 }
 
 func (s *SqlPostStore) SaveAnswer(post *model.Post) (*model.Post, *model.AppError) {
@@ -133,9 +166,11 @@ func (s *SqlPostStore) SaveAnswer(post *model.Post) (*model.Post, *model.AppErro
 	if err != nil {
 		return nil, model.NewAppError("SqlPostStore.SaveAnswer", "store.sql_post.save_answer.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
-	defer finalizeTransaction(transaction)
 
-	if upsertErr := s.saveAnswer(transaction, post, parent); upsertErr != nil {
+	curTime := model.GetMillis()
+
+	defer finalizeTransaction(transaction)
+	if upsertErr := s.saveAnswer(transaction, post, parent, curTime); upsertErr != nil {
 		return nil, upsertErr
 	}
 
@@ -143,10 +178,23 @@ func (s *SqlPostStore) SaveAnswer(post *model.Post) (*model.Post, *model.AppErro
 		return nil, model.NewAppError("SqlPostStore.SaveAnswer", "store.sql_post.save_answer.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
+	tags := []string{}
+	if count, err := s.GetPostCount("", post.UserId, post.TeamId, 0, 0); err == nil && count <= 1 {
+		tags = append(tags, model.SYSTEM_TAG_FIRST_POSTS)
+	}
+	if (curTime - parent.CreateAt) > model.LATE_ANSWERS_MILLIS {
+		tags = append(tags, model.SYSTEM_TAG_LATE_ANSWERS)
+	}
+
+	if len(tags) > 0 {
+		tagContents := strings.Join(tags, " ")
+		s.CreateSystemReview(post, "", tagContents, curTime)
+	}
+
 	return post, nil
 }
 
-func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Post, parent *model.Post) *model.AppError {
+func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Post, parent *model.Post, curTime int64) *model.AppError {
 	if len(post.Id) > 0 {
 		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.existing.app_error", nil, "id="+post.Id, http.StatusBadRequest)
 	}
@@ -162,7 +210,6 @@ func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Pos
 		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.app_error", nil, "id="+post.Id+", "+err.Error(), http.StatusInternalServerError)
 	}
 
-	curTime := model.GetMillis()
 	if _, err := transaction.Exec(
 		`
 		UPDATE Posts
@@ -222,12 +269,13 @@ func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Pos
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_CREATE_ANSWER,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     parent.Tags,
 		Points:   model.USER_POINT_FOR_CREATE_ANSWER,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
 }
@@ -253,8 +301,14 @@ func (s *SqlPostStore) SaveComment(post *model.Post) (*model.Post, *model.AppErr
 		return nil, model.NewAppError("SqlPostStore.saveComment", "store.sql_post.save_comment.max_limit.app_error", nil, "id="+post.Id, http.StatusBadRequest)
 	}
 
+	curTime := model.GetMillis()
+
 	if err := s.GetMaster().Insert(post); err != nil {
 		return nil, model.NewAppError("SqlPostStore.saveComment", "store.sql_post.save_comment.inserting.app_error", nil, "id="+post.Id+", "+err.Error(), http.StatusInternalServerError)
+	}
+
+	if count, err := s.GetPostCount("", post.UserId, post.TeamId, 0, 0); err == nil && count <= 1 {
+		s.CreateSystemReview(post, "", model.SYSTEM_TAG_FIRST_POSTS, curTime)
 	}
 
 	return post, nil
@@ -335,6 +389,7 @@ func (s *SqlPostStore) buildInsertTagsQuery(addedTags []string, time int64, team
 		tag := &model.Tag{
 			Content:   tagContent,
 			TeamId:    teamId,
+			Type:      "",
 			PostCount: 1,
 			CreateAt:  time,
 			UpdateAt:  time,
@@ -356,9 +411,21 @@ func (s *SqlPostStore) buildInsertTagsQuery(addedTags []string, time int64, team
 	return sql + " ON DUPLICATE KEY UPDATE PostCount = VALUES(PostCount) + 1, UpdateAt = VALUES(UpdateAt)", args, nil
 }
 
-func (s *SqlPostStore) GetSingle(id string) (*model.Post, *model.AppError) {
+func (s *SqlPostStore) GetSingle(id string, includeDeleted bool) (*model.Post, *model.AppError) {
+	var deletedClause string
+	if !includeDeleted {
+		deletedClause = "DeleteAt = 0 AND"
+	}
+
 	var post *model.Post
-	err := s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": id})
+	err := s.GetReplica().SelectOne(&post, `
+	SELECT *
+	FROM
+		Posts
+	WHERE
+		`+deletedClause+`
+		Id = :Id
+	`, map[string]interface{}{"Id": id})
 
 	if err != nil {
 		return nil, model.NewAppError("SqlPostStore.GetSingle", "store.sql_post.get.app_error", nil, "id="+id+err.Error(), http.StatusNotFound)
@@ -380,8 +447,8 @@ func (s *SqlPostStore) GetSingleByType(id string, postType string) (*model.Post,
 	return post, nil
 }
 
-func (s *SqlPostStore) GetPostCountByUserId(postType string, userId string, teamId string) (int64, *model.AppError) {
-	args := map[string]interface{}{"UserId": userId, "Type": postType}
+func (s *SqlPostStore) GetPostCount(postType string, userId string, teamId string, fromDate int64, toDate int64) (int64, *model.AppError) {
+	args := map[string]interface{}{}
 
 	teamFilter := ""
 	if teamId == "" {
@@ -391,19 +458,46 @@ func (s *SqlPostStore) GetPostCountByUserId(postType string, userId string, team
 		args["TeamId"] = teamId
 	}
 
+	typeFilter := ""
+	if postType != "" {
+		typeFilter = "AND Type = :Type"
+		args["Type"] = postType
+	}
+
+	userFilter := ""
+	if userId != "" {
+		userFilter = "AND UserId = :UserId"
+		args["UserId"] = userId
+	}
+
+	fromFilter := ""
+	if fromDate != int64(0) {
+		fromFilter = "AND CreateAt >= :FromDate"
+		args["FromDate"] = fromDate
+	}
+
+	toFilter := ""
+	if toDate != int64(0) {
+		toFilter = "AND CreateAt <= :ToDate"
+		args["ToDate"] = toDate
+	}
+
 	count, err := s.GetReplica().SelectInt(`
 		SELECT
 			count(*)
 		FROM
 			Posts
 		WHERE
-			UserId = :UserId
-			AND Type = :Type
+			DeleteAt = 0
+			`+typeFilter+`
 			`+teamFilter+`
-			AND DeleteAt = 0`, args)
+			`+userFilter+`
+			`+fromFilter+`
+			`+toFilter+`
+			`, args)
 
 	if err != nil {
-		return 0, model.NewAppError("SqlPostStore.GetPostCountByUserId", "store.sql_post.get_post_count_by_user_id.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return 0, model.NewAppError("SqlPostStore.GetPostCount", "store.sql_post.get_post_count_by_user_id.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	return count, nil
@@ -437,16 +531,18 @@ var specialSearchChar = []string{
 
 func (s *SqlPostStore) GetPosts(options *model.GetPostsOptions, getCount bool) (model.Posts, int64, *model.AppError) {
 	searchOptions := &model.SearchPostsOptions{
-		UserId:   options.UserId,
-		SortType: options.SortType,
-		PostType: options.PostType,
-		Ids:      []string{},
-		ParentId: options.ParentId,
-		FromDate: options.FromDate,
-		ToDate:   options.ToDate,
-		Page:     options.Page,
-		PerPage:  options.PerPage,
-		TeamId:   options.TeamId,
+		UserId:         options.UserId,
+		SortType:       options.SortType,
+		PostType:       options.PostType,
+		Ids:            []string{},
+		ParentId:       options.ParentId,
+		FromDate:       options.FromDate,
+		ToDate:         options.ToDate,
+		Page:           options.Page,
+		PerPage:        options.PerPage,
+		TeamId:         options.TeamId,
+		IncludeDeleted: options.IncludeDeleted,
+		OriginalId:     options.OriginalId,
 	}
 
 	if options.Title != "" {
@@ -652,10 +748,13 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 	}
 
 	query := s.GetQueryBuilder().Select(selectStr)
-	query = query.From("Posts p").
-		Where(sq.And{
+	query = query.From("Posts p")
+
+	if !options.IncludeDeleted {
+		query = query.Where(sq.And{
 			sq.Eq{"DeleteAt": int(0)},
 		})
+	}
 
 	if options.PostType != "" {
 		query = query.Where(sq.And{
@@ -697,6 +796,12 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 	if (options.PostType == model.POST_TYPE_ANSWER || options.PostType == model.POST_TYPE_COMMENT || options.PostType == "") && options.ParentId != "" {
 		query = query.Where(sq.And{
 			sq.Expr(`ParentId = ?`, options.ParentId),
+		})
+	}
+
+	if options.OriginalId != "" {
+		query = query.Where(sq.And{
+			sq.Expr(`OriginalId = ?`, options.OriginalId),
 		})
 	}
 
@@ -854,16 +959,35 @@ func (s *SqlPostStore) deleteQuestion(transaction *gorp.Transaction, post *model
 		}
 	}
 
+	if err := s.invalidateReviewsForPost(transaction, post.Id, time, post.TeamId); err != nil {
+		return err
+	}
+
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DELETE_QUESTION,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     post.Tags,
 		Points:   -(model.USER_POINT_FOR_CREATE_QUESTION),
 		CreateAt: time,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.deleteQuestion", "store.sql_post.delete_question.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+	s.SaveUserPointHistory(user_point_history)
+
+	return nil
+}
+
+func (s *SqlPostStore) invalidateReviewsForPost(transaction *gorp.Transaction, postId string, time int64, teamId string) *model.AppError {
+	var rev int64
+	var err *model.AppError
+	if rev, err = s.GetCurrentRevisionForPost(postId, teamId); err != nil {
+		return model.NewAppError("SqlPostStore.invalidateReviewsForPost", "store.sql_post.invalidate_reviews_for_post.get_revision.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	if _, err := s.GetMaster().Exec("UPDATE Votes SET InvalidateAt = :InvalidateAt, LastPostRev = :LastPostRev WHERE PostId = :PostId AND Type IN (:Type1, :Type2, :Type3) AND InvalidateAt = 0  AND CompletedAt = 0 AND RejectedAt = 0", map[string]interface{}{"InvalidateAt": time, "LastPostRev": rev, "PostId": postId, "Type1": model.VOTE_TYPE_REVIEW, "Type2": model.VOTE_TYPE_FLAG, "Type3": model.VOTE_TYPE_SYSTEM}); err != nil {
+		return model.NewAppError("SqlPostStore.invalidateReviewsForPost", "store.sql_post.invalidate_reviews_for_post.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	return nil
@@ -880,13 +1004,18 @@ func (s *SqlPostStore) DeleteAnswer(postId string, time int64, deleteById string
 		return appErr(err.Error())
 	}
 
+	var parent *model.Post
+	if err := s.GetReplica().SelectOne(&parent, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": post.ParentId}); err != nil {
+		return appErr(err.Error())
+	}
+
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
 		return model.NewAppError("SqlPostStore.DeleteAnswer", "store.sql_post.delete_answer.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.deleteAnswer(transaction, post, time, deleteById); upsertErr != nil {
+	if upsertErr := s.deleteAnswer(transaction, post, parent, time, deleteById); upsertErr != nil {
 		return upsertErr
 	}
 
@@ -897,7 +1026,7 @@ func (s *SqlPostStore) DeleteAnswer(postId string, time int64, deleteById string
 	return nil
 }
 
-func (s *SqlPostStore) deleteAnswer(transaction *gorp.Transaction, post *model.Post, time int64, deleteById string) *model.AppError {
+func (s *SqlPostStore) deleteAnswer(transaction *gorp.Transaction, post *model.Post, parent *model.Post, time int64, deleteById string) *model.AppError {
 	post.AddProp(model.POST_PROPS_DELETE_BY, deleteById)
 
 	if _, err := transaction.Exec("UPDATE Posts SET DeleteAt = :DeleteAt, UpdateAt = :UpdateAt, Props = :Props WHERE Id = :Id", map[string]interface{}{"DeleteAt": time, "UpdateAt": time, "Id": post.Id, "Props": model.StringInterfaceToJson(post.Props)}); err != nil {
@@ -921,17 +1050,22 @@ func (s *SqlPostStore) deleteAnswer(transaction *gorp.Transaction, post *model.P
 		}
 	}
 
+	if err := s.invalidateReviewsForPost(transaction, post.Id, time, post.TeamId); err != nil {
+		return err
+	}
+
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DELETE_ANSWER,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     parent.Tags,
 		Points:   -(model.USER_POINT_FOR_CREATE_ANSWER),
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.deleteAnswer", "store.sql_post.delete_answer.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
 }
@@ -949,8 +1083,23 @@ func (s *SqlPostStore) DeleteComment(postId string, time int64, deleteById strin
 
 	post.AddProp(model.POST_PROPS_DELETE_BY, deleteById)
 
-	if _, err := s.GetMaster().Exec("UPDATE Posts SET DeleteAt = :DeleteAt, UpdateAt = :UpdateAt, Props = :Props WHERE Id = :Id", map[string]interface{}{"DeleteAt": time, "UpdateAt": time, "Id": postId, "Props": model.StringInterfaceToJson(post.Props)}); err != nil {
-		return model.NewAppError("SqlPostStore.deleteComment", "store.sql_post.delete_comment.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	transaction, err := s.GetMaster().Begin()
+	if err != nil {
+		return model.NewAppError("SqlPostStore.DeleteComment", "store.sql_post.delete_comment.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	defer finalizeTransaction(transaction)
+
+	if _, err := transaction.Exec("UPDATE Posts SET DeleteAt = :DeleteAt, UpdateAt = :UpdateAt, Props = :Props WHERE Id = :Id", map[string]interface{}{"DeleteAt": time, "UpdateAt": time, "Id": postId, "Props": model.StringInterfaceToJson(post.Props)}); err != nil {
+		return model.NewAppError("SqlPostStore.DeleteComment", "store.sql_post.delete_comment.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	if err := s.invalidateReviewsForPost(transaction, postId, time, post.TeamId); err != nil {
+		return err
+	}
+
+	if err := transaction.Commit(); err != nil {
+		return model.NewAppError("SqlPostStore.DeleteComment", "store.sql_post.delete_comment.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	return nil
@@ -1034,24 +1183,26 @@ func (s *SqlPostStore) selectBestAnswer(transaction *gorp.Transaction, post *mod
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_SELECT_ANSWER,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     post.Tags,
 		Points:   model.USER_POINT_FOR_SELECT_ANSWER,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	user_point_history2 := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   ans.TeamId,
 		UserId:   ans.UserId,
 		Type:     model.USER_POINT_TYPE_SELECTED_ANSWER,
+		PostId:   ans.Id,
+		PostType: ans.Type,
+		Tags:     post.Tags,
 		Points:   model.USER_POINT_FOR_SELECTED_ANSWER,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history2); err != nil {
-		return model.NewAppError("SqlPostStore.selectBestAnswer", "store.sql_post.select_best_answer.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history2)
 
 	return nil
 }
@@ -1134,7 +1285,7 @@ func (s *SqlPostStore) GetChildPostsCount(id string) (int64, *model.AppError) {
 	return count, nil
 }
 
-func (s *SqlPostStore) UpVotePost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) UpVotePost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.UpVotePost", "store.sql_post.upvote_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1142,27 +1293,30 @@ func (s *SqlPostStore) UpVotePost(postId string, userId string) *model.AppError 
 	var post *model.Post
 	err := s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.UpVotePost", "store.sql_post.upvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.UpVotePost", "store.sql_post.upvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.upvotePost(transaction, post, userId); upsertErr != nil {
-		return upsertErr
+
+	var vote *model.Vote
+	var upsertErr *model.AppError
+	if vote, upsertErr = s.upvotePost(transaction, post, userId); upsertErr != nil {
+		return nil, upsertErr
 	}
 
 	if err := transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.UpVotePost", "store.sql_post.upvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.UpVotePost", "store.sql_post.upvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return vote, nil
 }
 
-func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Post, userId string) *model.AppError {
+func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Post, userId string) (*model.Vote, *model.AppError) {
 	curTime := model.GetMillis()
 
 	vote := &model.Vote{
@@ -1174,26 +1328,32 @@ func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Pos
 	}
 
 	if err := transaction.Insert(vote); err != nil {
-		return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	if _, err := transaction.Exec("UPDATE Posts SET UpVotes = UpVotes + 1, Points = Points + 1, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"UpdateAt": curTime, "Id": post.Id}); err != nil {
-		return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	// prevent self point gain
 	if userId == post.UserId {
-		return nil
+		return vote, nil
 	}
 
 	if len(post.TeamId) == 0 {
 		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 	} else {
 		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForVoted": model.USER_POINT_FOR_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
+	}
+
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return nil, appErr
 	}
 
 	user_point_history := &model.UserPointHistory{
@@ -1201,17 +1361,38 @@ func (s *SqlPostStore) upvotePost(transaction *gorp.Transaction, post *model.Pos
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_VOTED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   model.USER_POINT_FOR_VOTED,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.upvotePost", "store.sql_post.upvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
-	return nil
+	return vote, nil
 }
 
-func (s *SqlPostStore) CancelUpVotePost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) getTagsForPost(post *model.Post) (string, *model.AppError) {
+	tags := post.Tags
+
+	if post.Type == model.POST_TYPE_ANSWER {
+		var parent *model.Post
+		if err := s.GetReplica().SelectOne(&parent, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": post.ParentId}); err != nil {
+			return "", model.NewAppError("SqlPostStore.getTagsForPost", "store.sql_post.get_tags_for_post.parent.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+		tags = parent.Tags
+	} else if post.Type == model.POST_TYPE_COMMENT {
+		var root *model.Post
+		if err := s.GetReplica().SelectOne(&root, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": post.RootId}); err != nil {
+			return "", model.NewAppError("SqlPostStore.getTagsForPost", "store.sql_post.get_tags_for_post.root.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+		tags = root.Tags
+	}
+
+	return tags, nil
+}
+
+func (s *SqlPostStore) CancelUpVotePost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.CancelUpVotePost", "store.sql_post.cancel_upvote_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1219,36 +1400,38 @@ func (s *SqlPostStore) CancelUpVotePost(postId string, userId string) *model.App
 	var vote *model.Vote
 	err := s.GetReplica().SelectOne(&vote, "SELECT * FROM Votes WHERE PostId = :PostId AND Type = :Type AND UserId = :UserId", map[string]interface{}{"PostId": postId, "Type": model.VOTE_TYPE_UP_VOTE, "UserId": userId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if vote == nil {
-		return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	var post *model.Post
 	err = s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if post == nil {
-		return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.CancelUpVotePost", "store.sql_post.cancel_upvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelUpVotePost", "store.sql_post.cancel_upvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.cancelUpvotePost(transaction, vote, post, userId); upsertErr != nil {
-		return upsertErr
+
+	var upsertErr *model.AppError
+	if upsertErr = s.cancelUpvotePost(transaction, vote, post, userId); upsertErr != nil {
+		return nil, upsertErr
 	}
 
 	if err = transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.CancelUpVotePost", "store.sql_post.cancel_upvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelUpVotePost", "store.sql_post.cancel_upvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return vote, nil
 }
 
 func (s *SqlPostStore) cancelUpvotePost(transaction *gorp.Transaction, vote *model.Vote, post *model.Post, userId string) *model.AppError {
@@ -1281,22 +1464,29 @@ func (s *SqlPostStore) cancelUpvotePost(transaction *gorp.Transaction, vote *mod
 		}
 	}
 
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return appErr
+	}
+
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_VOTED_CANCELED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   -(model.USER_POINT_FOR_VOTED),
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.CancelUpvotePost", "store.sql_post.cancel_upvote_post.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
 }
 
-func (s *SqlPostStore) DownVotePost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) DownVotePost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.DownVotePost", "store.sql_post.downvote_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1304,27 +1494,30 @@ func (s *SqlPostStore) DownVotePost(postId string, userId string) *model.AppErro
 	var post *model.Post
 	err := s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.DownVotePost", "store.sql_post.downvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.DownVotePost", "store.sql_post.downvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.downvotePost(transaction, post, userId); upsertErr != nil {
-		return upsertErr
+
+	var vote *model.Vote
+	var upsertErr *model.AppError
+	if vote, upsertErr = s.downvotePost(transaction, post, userId); upsertErr != nil {
+		return nil, upsertErr
 	}
 
 	if err := transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.DownVotePost", "store.sql_post.downvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.DownVotePost", "store.sql_post.downvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return vote, nil
 }
 
-func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.Post, userId string) *model.AppError {
+func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.Post, userId string) (*model.Vote, *model.AppError) {
 	curTime := model.GetMillis()
 
 	vote := &model.Vote{
@@ -1336,26 +1529,32 @@ func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.P
 	}
 
 	if err := transaction.Insert(vote); err != nil {
-		return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	if _, err := transaction.Exec("UPDATE Posts SET DownVotes = DownVotes + 1, Points = Points - 1, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"UpdateAt": curTime, "Id": post.Id}); err != nil {
-		return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	// prevent self point gain
 	if userId == post.UserId {
-		return nil
+		return vote, nil
 	}
 
 	if len(post.TeamId) == 0 {
 		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForDownVoted, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 	} else {
 		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForDownVoted WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForDownVoted": model.USER_POINT_FOR_DOWN_VOTED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
+	}
+
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return nil, appErr
 	}
 
 	user_point_history := &model.UserPointHistory{
@@ -1363,17 +1562,18 @@ func (s *SqlPostStore) downvotePost(transaction *gorp.Transaction, post *model.P
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DOWN_VOTED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   model.USER_POINT_FOR_DOWN_VOTED,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.downvotePost", "store.sql_post.downvotePost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
-	return nil
+	return vote, nil
 }
 
-func (s *SqlPostStore) CancelDownVotePost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) CancelDownVotePost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.CancelDownVotePost", "store.sql_post.cancel_downvote_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1381,36 +1581,36 @@ func (s *SqlPostStore) CancelDownVotePost(postId string, userId string) *model.A
 	var vote *model.Vote
 	err := s.GetReplica().SelectOne(&vote, "SELECT * FROM Votes WHERE PostId = :PostId AND Type = :Type AND UserId = :UserId", map[string]interface{}{"PostId": postId, "Type": model.VOTE_TYPE_DOWN_VOTE, "UserId": userId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if vote == nil {
-		return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	var post *model.Post
 	err = s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if post == nil {
-		return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.CancelDownVotePost", "store.sql_post.cancel_downvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelDownVotePost", "store.sql_post.cancel_downvote_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
 	if upsertErr := s.cancelDownvotePost(transaction, vote, post, userId); upsertErr != nil {
-		return upsertErr
+		return nil, upsertErr
 	}
 
 	if err = transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.CancelDownVotePost", "store.sql_post.cancel_downvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelDownVotePost", "store.sql_post.cancel_downvote_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return vote, nil
 }
 
 func (s *SqlPostStore) cancelDownvotePost(transaction *gorp.Transaction, vote *model.Vote, post *model.Post, userId string) *model.AppError {
@@ -1443,22 +1643,29 @@ func (s *SqlPostStore) cancelDownvotePost(transaction *gorp.Transaction, vote *m
 		}
 	}
 
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return appErr
+	}
+
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_DOWN_VOTED_CANCELED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   -(model.USER_POINT_FOR_DOWN_VOTED),
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.CancelDownvotePost", "store.sql_post.cancel_downvote_post.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
 }
 
-func (s *SqlPostStore) FlagPost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) FlagPost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.FlagPost", "store.sql_post.flag_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1466,53 +1673,69 @@ func (s *SqlPostStore) FlagPost(postId string, userId string) *model.AppError {
 	var post *model.Post
 	err := s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.FlagPost", "store.sql_post.flag_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.FlagPost", "store.sql_post.flag_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
-	if upsertErr := s.flagPost(transaction, post, userId); upsertErr != nil {
-		return upsertErr
+
+	var vote *model.Vote
+	var upsertErr *model.AppError
+	if vote, upsertErr = s.flagPost(transaction, post, userId); upsertErr != nil {
+		return nil, upsertErr
 	}
 
 	if err := transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.FlagPost", "store.sql_post.flag_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.FlagPost", "store.sql_post.flag_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return vote, nil
 }
 
-func (s *SqlPostStore) flagPost(transaction *gorp.Transaction, post *model.Post, userId string) *model.AppError {
+func (s *SqlPostStore) flagPost(transaction *gorp.Transaction, post *model.Post, userId string) (*model.Vote, *model.AppError) {
 	curTime := model.GetMillis()
 
+	var rev int64
+	var err *model.AppError
+	if rev, err = s.GetCurrentRevisionForPost(post.Id, post.TeamId); err != nil {
+		return nil, model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.get_revision.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
 	flag := &model.Vote{
-		PostId:   post.Id,
-		UserId:   userId,
-		Type:     model.VOTE_TYPE_FLAG,
-		TeamId:   post.TeamId,
-		CreateAt: curTime,
+		PostId:       post.Id,
+		UserId:       userId,
+		Type:         model.VOTE_TYPE_FLAG,
+		TeamId:       post.TeamId,
+		CreateAt:     curTime,
+		FirstPostRev: int(rev),
 	}
 
 	if err := transaction.Insert(flag); err != nil {
-		return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	if _, err := transaction.Exec("UPDATE Posts SET FlagCount = FlagCount + 1, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"UpdateAt": curTime, "Id": post.Id}); err != nil {
-		return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	if len(post.TeamId) == 0 {
 		if _, err := transaction.Exec("UPDATE Users SET Points = Points + :PointForFlagged, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "UpdateAt": curTime, "Id": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 	} else {
 		if _, err := transaction.Exec("UPDATE TeamMembers SET Points = Points + :PointForFlagged WHERE TeamId = :TeamId AND UserId = :UserId AND DeleteAt = 0", map[string]interface{}{"PointForFlagged": model.USER_POINT_FOR_FLAGGED, "TeamId": post.TeamId, "UserId": post.UserId}); err != nil {
-			return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+			return nil, model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
+	}
+
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return nil, appErr
 	}
 
 	user_point_history := &model.UserPointHistory{
@@ -1520,17 +1743,18 @@ func (s *SqlPostStore) flagPost(transaction *gorp.Transaction, post *model.Post,
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_FLAGGED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   model.USER_POINT_FOR_FLAGGED,
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.flagPost", "store.sql_post.flagPost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
-	return nil
+	return flag, nil
 }
 
-func (s *SqlPostStore) CancelFlagPost(postId string, userId string) *model.AppError {
+func (s *SqlPostStore) CancelFlagPost(postId string, userId string) (*model.Vote, *model.AppError) {
 	appErr := func(errMsg string) *model.AppError {
 		return model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.app_error", nil, "id="+postId+", err="+errMsg, http.StatusInternalServerError)
 	}
@@ -1538,36 +1762,36 @@ func (s *SqlPostStore) CancelFlagPost(postId string, userId string) *model.AppEr
 	var flag *model.Vote
 	err := s.GetReplica().SelectOne(&flag, "SELECT * FROM Votes WHERE PostId = :PostId AND Type = :Type AND UserId = :UserId", map[string]interface{}{"PostId": postId, "Type": model.VOTE_TYPE_FLAG, "UserId": userId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if flag == nil {
-		return model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	var post *model.Post
 	err = s.GetReplica().SelectOne(&post, "SELECT * FROM Posts WHERE Id = :Id AND DeleteAt = 0", map[string]interface{}{"Id": postId})
 	if err != nil {
-		return appErr(err.Error())
+		return nil, appErr(err.Error())
 	}
 	if post == nil {
-		return model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.select.app_error", nil, "", http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.select.app_error", nil, "", http.StatusInternalServerError)
 	}
 
 	transaction, err := s.GetMaster().Begin()
 	if err != nil {
-		return model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.open_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
 	defer finalizeTransaction(transaction)
 	if upsertErr := s.cancelFlagPost(transaction, flag, post, userId); upsertErr != nil {
-		return upsertErr
+		return nil, upsertErr
 	}
 
 	if err = transaction.Commit(); err != nil {
-		return model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return nil, model.NewAppError("SqlPostStore.CancelFlagPost", "store.sql_post.cancel_flag_post.commit_transaction.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	return nil
+	return flag, nil
 }
 
 func (s *SqlPostStore) cancelFlagPost(transaction *gorp.Transaction, flag *model.Vote, post *model.Post, userId string) *model.AppError {
@@ -1591,17 +1815,24 @@ func (s *SqlPostStore) cancelFlagPost(transaction *gorp.Transaction, flag *model
 		}
 	}
 
+	var tags string
+	var appErr *model.AppError
+	if tags, appErr = s.getTagsForPost(post); appErr != nil {
+		return appErr
+	}
+
 	user_point_history := &model.UserPointHistory{
 		Id:       model.NewId(),
 		TeamId:   post.TeamId,
 		UserId:   post.UserId,
 		Type:     model.USER_POINT_TYPE_FLAGGED_CANCELED,
+		PostId:   post.Id,
+		PostType: post.Type,
+		Tags:     tags,
 		Points:   -(model.USER_POINT_FOR_FLAGGED),
 		CreateAt: curTime,
 	}
-	if err := transaction.Insert(user_point_history); err != nil {
-		return model.NewAppError("SqlPostStore.cancelFlagPost", "store.sql_post.cancelFlagPost.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
+	s.SaveUserPointHistory(user_point_history)
 
 	return nil
 }
@@ -1686,4 +1917,211 @@ func (s *SqlPostStore) CancelProtectPost(postId string, userId string) *model.Ap
 	}
 
 	return nil
+}
+
+func (s *SqlPostStore) ViewPost(postId string, teamId string, userId string, ipAddress string, count int) *model.AppError {
+	curTime := model.GetMillis()
+
+	if _, err := s.GetMaster().Exec("UPDATE Posts SET Views = Views + :ViewsCount, UpdateAt = :UpdateAt WHERE Id = :Id", map[string]interface{}{"ViewsCount": count, "UpdateAt": curTime, "Id": postId}); err != nil {
+		return model.NewAppError("SqlPostStore.ViewPost", "store.sql_post.view_post.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	s.SavePostViewsHistory(postId, teamId, userId, ipAddress, count, curTime)
+
+	return nil
+}
+
+func (s *SqlPostStore) SavePostViewsHistory(postId string, teamId string, userId string, ipAddress string, count int, time int64) (*model.PostViewsHistory, *model.AppError) {
+	post_views_history := &model.PostViewsHistory{
+		Id:         model.NewId(),
+		PostId:     postId,
+		TeamId:     teamId,
+		UserId:     userId,
+		IpAddress:  ipAddress,
+		ViewsCount: count,
+		CreateAt:   time,
+	}
+
+	if err := s.GetMaster().Insert(post_views_history); err != nil {
+		return nil, model.NewAppError("SqlPostStore.SavePostViewsHistory", "store.sql_post.save_post_views_history.inserting.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return post_views_history, nil
+}
+
+func (s *SqlPostStore) RelatedSearch(term string, limit int) ([]*model.RelatedPostSearchResult, *model.AppError) {
+	return nil, nil
+}
+
+func (s *SqlPostStore) HotSearch(interval string, teamId string, limit int) ([]string, *model.AppError) {
+	return nil, nil
+}
+
+func (s *SqlPostStore) GetCurrentRevisionForPost(postId, teamId string) (int64, *model.AppError) {
+	args := map[string]interface{}{"OriginalId": postId}
+
+	teamFilter := ""
+	if teamId == "" {
+		teamFilter = "AND TeamId IS NULL"
+	} else {
+		teamFilter = "AND TeamId = :TeamId"
+		args["TeamId"] = teamId
+	}
+
+	count, err := s.GetReplica().SelectInt(`
+		SELECT
+			count(*)
+		FROM
+			Posts
+		WHERE
+			OriginalId = :OriginalId
+			`+teamFilter+`
+			`, args)
+
+	if err != nil {
+		return 0, model.NewAppError("SqlPostStore.GetCurrentRevisionForPost", "store.sql_post.get_revisions_total_count_for_post.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return count + 1, nil
+}
+
+func (s *SqlPostStore) GetRevisionPost(postId, teamId string, offset int) (*model.Post, *model.AppError) {
+	args := map[string]interface{}{"OriginalId": postId, "Limit": 1, "Offset": offset}
+
+	teamFilter := ""
+	if teamId == "" {
+		teamFilter = "AND TeamId IS NULL"
+	} else {
+		teamFilter = "AND TeamId = :TeamId"
+		args["TeamId"] = teamId
+	}
+
+	var post *model.Post
+	err := s.GetReplica().SelectOne(&post, `
+		SELECT
+			*
+		FROM
+			Posts
+		WHERE
+			OriginalId = :OriginalId
+			`+teamFilter+`
+		ORDER BY
+			UpdateAt ASC
+		LIMIT
+			:Limit
+		OFFSET
+			:Offset
+			`, args)
+
+	if err != nil {
+		return nil, model.NewAppError("SqlPostStore.GetRevisionPost", "store.sql_post.get_revision_post.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return post, nil
+}
+
+func (s *SqlPostStore) GetAnsweredRate(teamId string) (float64, *model.AppError) {
+	args := map[string]interface{}{"Type": model.POST_TYPE_ANSWER}
+
+	teamFilter := ""
+	if teamId == "" {
+		teamFilter = "AND TeamId IS NULL"
+	} else {
+		teamFilter = "AND TeamId = :TeamId"
+		args["TeamId"] = teamId
+	}
+
+	var answeredCount int64
+	answeredCount, err := s.GetReplica().SelectInt(`
+		SELECT
+			COUNT(DISTINCT ParentId)
+		FROM
+			Posts
+		WHERE
+			Type = :Type
+			`+teamFilter+`
+			AND DeleteAt = 0
+			`, args)
+
+	if err != nil {
+		return float64(0), model.NewAppError("SqlPostStore.GetAnsweredRate", "store.sql_post.get_answered_rate.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	var totalCount int64
+	var appErr *model.AppError
+	if totalCount, appErr = s.GetPostCount(model.POST_TYPE_QUESTION, "", teamId, 0, 0); appErr != nil {
+		return float64(0), appErr
+	}
+
+	rate := float64(answeredCount) / float64(totalCount)
+
+	return rate, nil
+}
+
+func (s *SqlPostStore) AnalyticsPostCounts(teamId string) (model.Analytics, *model.AppError) {
+	query :=
+		`SELECT
+		        DATE(FROM_UNIXTIME(Posts.CreateAt / 1000)) AS Name,
+		        COUNT(Posts.Id) AS Value
+		    FROM Posts`
+
+	if len(teamId) > 0 {
+		query += " WHERE TeamId = :TeamId AND"
+	} else {
+		query += " WHERE"
+	}
+
+	query += ` Posts.CreateAt <= :EndTime
+		            AND Posts.CreateAt >= :StartTime
+		GROUP BY DATE(FROM_UNIXTIME(Posts.CreateAt / 1000))
+		ORDER BY Name DESC
+		LIMIT 30`
+
+	end := utils.MillisFromTime(utils.EndOfDay(utils.Yesterday()))
+	start := utils.MillisFromTime(utils.StartOfDay(utils.Yesterday().AddDate(0, 0, -31)))
+
+	var rows model.Analytics
+	_, err := s.GetReplica().Select(
+		&rows,
+		query,
+		map[string]interface{}{"TeamId": teamId, "StartTime": start, "EndTime": end})
+	if err != nil {
+		return nil, model.NewAppError("SqlPostStore.AnalyticsPostCounts", "store.sql_post.analytics_post_counts.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return rows, nil
+}
+
+func (s *SqlPostStore) AnalyticsActiveAuthorCounts(teamId string) (model.Analytics, *model.AppError) {
+	query :=
+		`SELECT
+		        DATE(FROM_UNIXTIME(Posts.CreateAt / 1000)) AS Name,
+		        COUNT(DISTINCT Posts.UserId) AS Value
+		    FROM Posts`
+
+	if len(teamId) > 0 {
+		query += " WHERE TeamId = :TeamId AND"
+	} else {
+		query += " WHERE"
+	}
+
+	query += ` Posts.CreateAt <= :EndTime
+		            AND Posts.CreateAt >= :StartTime
+		GROUP BY DATE(FROM_UNIXTIME(Posts.CreateAt / 1000))
+		ORDER BY Name DESC
+		LIMIT 30`
+
+	end := utils.MillisFromTime(utils.EndOfDay(utils.Yesterday()))
+	start := utils.MillisFromTime(utils.StartOfDay(utils.Yesterday().AddDate(0, 0, -31)))
+
+	var rows model.Analytics
+	_, err := s.GetReplica().Select(
+		&rows,
+		query,
+		map[string]interface{}{"TeamId": teamId, "StartTime": start, "EndTime": end})
+	if err != nil {
+		return nil, model.NewAppError("SqlPostStore.AnalyticsActiveAuthorCounts", "store.sql_post.analytics_active_author_count.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	return rows, nil
 }

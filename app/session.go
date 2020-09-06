@@ -48,16 +48,34 @@ func (a *App) RevokeSessionById(sessionId string) *model.AppError {
 }
 
 func (a *App) RevokeSession(session *model.Session) *model.AppError {
-	if err := a.Srv.Store.Session().Remove(session.Id); err != nil {
-		return err
+	if session.IsOAuth {
+		// sessionだけでなく関連するaccessDataも削除
+		if err := a.RevokeAccessToken(session.Token); err != nil {
+			return err
+		}
+	} else {
+		if err := a.Srv.Store.Session().Remove(session.Id); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
 func (a *App) RevokeAllSessions(userId string) *model.AppError {
-	if err := a.Srv.Store.Session().RemoveByUserId(userId); err != nil {
+	sessions, err := a.Srv.Store.Session().GetSessions(userId)
+	if err != nil {
 		return err
+	}
+
+	for _, session := range sessions {
+		if session.IsOAuth {
+			a.RevokeAccessToken(session.Token)
+		} else {
+			if err := a.Srv.Store.Session().Remove(session.Id); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

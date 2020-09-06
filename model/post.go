@@ -32,33 +32,15 @@ const (
 	POST_SORT_TYPE_NAME      = "name"
 	POST_SORT_TYPE_POPULAR   = "popular"
 	POST_SORT_TYPE_RELEVANCE = "relevance"
+
+	HOT_POSTS_INTERVAL_DAYS  = "days"
+	HOT_POSTS_INTERVAL_WEEK  = "week"
+	HOT_POSTS_INTERVAL_MONTH = "month"
 )
 
-// TODO: question's views count:
-// There is a buffer in memory which accumulates counter hit data
-// then periodically writes it to the database where it updates the [Views] column of each question involved.
-// The buffer has some fixed size. It's flushed when either it's filled up or when a predetermined time interval elapses.
-//
-// キャッシュはアプリとDBの中間レイヤー。
-// 計3種類用意する。
-//
-// もしバッファーAが無かったなら、
-// (IP or UserId) + QuestionId をキーとし、
-// ttl時間(15分)設定したバッファーAを用意する。
-// もしバッファーAが有ったなら、以下の(1),(2)の手順に従う。
-//
-// QuestionId + "previous" をキーとし、1日の特定の15分間隔を示すハッシュ値 を管理する別のバッファーB と
-// QuestionId + "counters" をキーとし、counter値 を管理する別のバッファーC
-// を用意しておき、
-// (1)現在時刻がバッファーBのハッシュ値と同じ期間だった場合、またはバッファーBが無かった場合は、
-// バッファーCのcounter値をインクリメントする。
-// (2)現在時刻がバッファーBのハッシュ値と異なる期間だった場合、
-// またはバッファーCのcounter値が一定数を超えた場合は、Post.Viewsをcounter値の分だけインクリメント更新し、バッファーB,Cを削除する。
-//
-// → QuestionId + 15_min_hashをキーにしてredisのKEYSコマンドで検索すれば、バッファーBは不要かも。
-//
-// ElasticCache for redis:
-// When the amount of data exceeds the configured maxmemory setting, Redis has different ways of responding depending on the selected eviction policy. By default, ElastiCache for Redis is configured to remove from memory the least recently used keys with a ttl set. The eviction policy parameter is called maxmemory-policy, and the default value in ElastiCache is volatile-lru. Another interesting option for this use case is the volatile-ttl policy, which instructs Redis to reclaim memory by removing those keys with the shortest ttl.
+// TODO: closed questions:
+// cannot be answered, but can be edited to make them eligible for reopening.
+// If your question is closed, you will receive private feedback on the reason why it was closed.
 type Post struct {
 	Id          string          `db:"Id, primarykey" json:"id"`
 	Type        string          `db:"Type" json:"type"`
@@ -77,6 +59,7 @@ type Post struct {
 	Points      int             `db:"Points" json:"points,omitempty"`
 	AnswerCount int             `db:"AnswerCount" json:"answer_count,omitempty"`
 	FlagCount   int             `db:"FlagCount" json:"flag_count,omitempty"`
+	Views       int             `db:"Views" json:"views,omitempty"`
 	ProtectedAt int64           `db:"ProtectedAt" json:"protected_at,omitempty"`
 	LockedAt    int64           `db:"LockedAt" json:"locked_at,omitempty"`
 	CreateAt    int64           `db:"CreateAt" json:"create_at"`
@@ -225,41 +208,45 @@ func IsQuestionOrAnswer(postType string) bool {
 
 // tag or title or link can be used as TermsType
 type GetPostsOptions struct {
-	FromDate  int64
-	ToDate    int64
-	PostType  string
-	ParentId  string
-	UserId    string
-	SortType  string
-	Min       *int
-	Max       *int
-	Tagged    string
-	Title     string
-	Link      string
-	NoAnswers bool
-	Page      int
-	PerPage   int
-	TeamId    string
+	FromDate       int64
+	ToDate         int64
+	PostType       string
+	ParentId       string
+	UserId         string
+	SortType       string
+	Min            *int
+	Max            *int
+	Tagged         string
+	Title          string
+	Link           string
+	NoAnswers      bool
+	Page           int
+	PerPage        int
+	TeamId         string
+	IncludeDeleted bool
+	OriginalId     string
 }
 
 type SearchPostsOptions struct {
-	Terms         string
-	ExcludedTerms string
-	TermsType     string
-	UserId        string
-	SortType      string
-	MinVotes      *int
-	MaxVotes      *int
-	MinAnswers    *int
-	MaxAnswers    *int
-	PostType      string
-	Ids           []string
-	ParentId      string
-	FromDate      int64
-	ToDate        int64
-	Page          int
-	PerPage       int
-	TeamId        string
+	Terms          string
+	ExcludedTerms  string
+	TermsType      string
+	UserId         string
+	SortType       string
+	MinVotes       *int
+	MaxVotes       *int
+	MinAnswers     *int
+	MaxAnswers     *int
+	PostType       string
+	Ids            []string
+	ParentId       string
+	FromDate       int64
+	ToDate         int64
+	Page           int
+	PerPage        int
+	TeamId         string
+	IncludeDeleted bool
+	OriginalId     string
 }
 
 func (o *GetPostsOptions) GetPostsOptionsToJson() string {
@@ -293,4 +280,11 @@ func AdvancedSearchParameterFromJson(data io.Reader) *AdvancedSearchParameter {
 	}
 
 	return &searchParam
+}
+
+type RelatedPostSearchResult struct {
+	Id          string `json:"id"`
+	TeamId      string `json:"team_id"`
+	Title       string `json:"title"`
+	AnswerCount int    `json:"answer_count,omitempty"`
 }

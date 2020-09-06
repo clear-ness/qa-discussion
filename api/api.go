@@ -48,6 +48,16 @@ type Routes struct {
 	PostsForTeam *mux.Router // 'api/v1/teams/{team_id:[A-Za-z0-9]+}/posts'
 	PostForTeam  *mux.Router // 'api/v1/teams/{team_id:[A-Za-z0-9]+}/posts/{post_id:[A-Za-z0-9]+}'
 
+	RevisionsForPost *mux.Router // 'api/v1/posts/{post_id:[A-Za-z0-9]+}/revisions'
+	RevisionForPost  *mux.Router // 'api/v1/posts/{post_id:[A-Za-z0-9]+}/revisions/{revision_id:[0-9]+}'
+
+	RevisionsForPostForTeam *mux.Router // 'api/v1/teams/{team_id:[A-Za-z0-9]+}/posts/{post_id:[A-Za-z0-9]+}/revisions'
+	RevisionForPostForTeam  *mux.Router // 'api/v1/teams/{team_id:[A-Za-z0-9]+}/posts/{post_id:[A-Za-z0-9]+}/revisions/{revision_id:[0-9]+}'
+
+	Reviews        *mux.Router // 'api/v1/reviews'
+	ReviewsForPost *mux.Router // 'api/v1/posts/{post_id:[A-Za-z0-9]+}/reviews'
+	ReviewsForUser *mux.Router // 'api/v1/users/{user_id:[A-Za-z0-9]+}/reviews'
+
 	Files *mux.Router // 'api/v1/files'
 	File  *mux.Router // 'api/v1/files/{file_id:[A-Za-z0-9]+}'
 
@@ -62,6 +72,13 @@ type Routes struct {
 	TeamMemberFavoritePosts *mux.Router // 'api/v1/teams/{team_id:[A-Za-z0-9]+}/members/{user_id:[A-Za-z0-9]+}/user_favorite_posts'
 
 	NotificationSettingForUser *mux.Router // 'api/v1/users/{user_id:[A-Za-z0-9]+}/notification_setting'
+
+	Hooks *mux.Router // 'api/v1/hooks'
+	Hook  *mux.Router // 'api/v1/hooks/{hook_id:[A-Za-z0-9]+}'
+
+	OAuth     *mux.Router // 'api/v1/oauth'
+	OAuthApps *mux.Router // 'api/v1/oauth/apps'
+	OAuthApp  *mux.Router // 'api/v1/oauth/apps/{app_id:[A-Za-z0-9]+}'
 }
 
 type API struct {
@@ -112,6 +129,16 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 	api.BaseRoutes.PostsForTeam = api.BaseRoutes.Team.PathPrefix("/posts").Subrouter()
 	api.BaseRoutes.PostForTeam = api.BaseRoutes.PostsForTeam.PathPrefix("/{post_id:[A-Za-z0-9]+}").Subrouter()
 
+	api.BaseRoutes.RevisionsForPost = api.BaseRoutes.Post.PathPrefix("/revisions").Subrouter()
+	api.BaseRoutes.RevisionForPost = api.BaseRoutes.RevisionsForPost.PathPrefix("/{revision_id:[0-9]+}").Subrouter()
+
+	api.BaseRoutes.RevisionsForPostForTeam = api.BaseRoutes.PostForTeam.PathPrefix("/revisions").Subrouter()
+	api.BaseRoutes.RevisionForPostForTeam = api.BaseRoutes.RevisionsForPostForTeam.PathPrefix("/{revision_id:[0-9]+}").Subrouter()
+
+	api.BaseRoutes.Reviews = api.BaseRoutes.ApiRoot.PathPrefix("/reviews").Subrouter()
+	api.BaseRoutes.ReviewsForPost = api.BaseRoutes.Post.PathPrefix("/reviews").Subrouter()
+	api.BaseRoutes.ReviewsForUser = api.BaseRoutes.User.PathPrefix("/reviews").Subrouter()
+
 	api.BaseRoutes.Files = api.BaseRoutes.ApiRoot.PathPrefix("/files").Subrouter()
 	api.BaseRoutes.File = api.BaseRoutes.ApiRoot.PathPrefix("/files/{file_id:[A-Za-z0-9]+}").Subrouter()
 
@@ -127,6 +154,13 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 
 	api.BaseRoutes.NotificationSettingForUser = api.BaseRoutes.User.PathPrefix("/notification_setting").Subrouter()
 
+	api.BaseRoutes.Hooks = api.BaseRoutes.ApiRoot.PathPrefix("/hooks").Subrouter()
+	api.BaseRoutes.Hook = api.BaseRoutes.Hooks.PathPrefix("/{hook_id:[A-Za-z0-9]+}").Subrouter()
+
+	api.BaseRoutes.OAuth = api.BaseRoutes.ApiRoot.PathPrefix("/oauth").Subrouter()
+	api.BaseRoutes.OAuthApps = api.BaseRoutes.OAuth.PathPrefix("/apps").Subrouter()
+	api.BaseRoutes.OAuthApp = api.BaseRoutes.OAuthApps.PathPrefix("/{app_id:[A-Za-z0-9]+}").Subrouter()
+
 	api.InitTeam()
 	api.InitGroup()
 	api.InitCollection()
@@ -136,6 +170,9 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 	api.InitUserFavoritePost()
 	api.InitFile()
 	api.InitNotificationSetting()
+	api.InitReview()
+	api.InitWebhook()
+	api.InitOAuth()
 
 	root.Handle("/api/v1/{anything:.*}", http.HandlerFunc(hello))
 

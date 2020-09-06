@@ -60,3 +60,15 @@ func (s *SqlUserPointHistoryStore) GetUserPointHistoryBeforeTime(time int64, use
 
 	return history, nil
 }
+
+func (s *SqlUserPointHistoryStore) TopAskersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopUserByTagResult, *model.AppError) {
+	return nil, nil
+}
+
+func (s *SqlUserPointHistoryStore) TopAnswerersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopUserByTagResult, *model.AppError) {
+	return nil, nil
+}
+
+func (s *SqlUserPointHistoryStore) TopAnswersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopPostByTagResult, *model.AppError) {
+	return nil, nil
+}

@@ -28,6 +28,11 @@ const (
 	USER_POINT_FOR_FLAGGED         = -2
 
 	MIN_USER_POINT_FOR_ANSWER_FOR_PROTECTED_POST = 10
+	MIN_USER_POINT_FOR_VOTE_REVIEW               = 100
+
+	USER_POINT_HISTORY_INTERVAL_DAY   = "day"
+	USER_POINT_HISTORY_INTERVAL_WEEK  = "week"
+	USER_POINT_HISTORY_INTERVAL_MONTH = "month"
 )
 
 type UserPointHistory struct {
@@ -35,6 +40,9 @@ type UserPointHistory struct {
 	TeamId   string `db:"TeamId" json:"team_id"`
 	UserId   string `db:"UserId" json:"user_id"`
 	Type     string `db:"Type" json:"type"`
+	PostId   string `db:"PostId" json:"post_id"`
+	PostType string `db:"PostType" json:"post_type"`
+	Tags     string `db:"Tags" json:"tags,omitempty"`
 	Points   int    `db:"Points" json:"points"`
 	CreateAt int64  `db:"CreateAt" json:"create_at"`
 }
@@ -42,4 +50,34 @@ type UserPointHistory struct {
 func UserPointHistoryToJson(u []*UserPointHistory) string {
 	b, _ := json.Marshal(u)
 	return string(b)
+}
+
+type TopUserByTagResult struct {
+	UserId     string `json:"user_id"`
+	TotalScore int    `json:"total_score"`
+}
+
+type TopPostByTagResult struct {
+	PostId     string `json:"post_id"`
+	TotalScore int    `json:"total_score"`
+}
+
+type TopUserByTagResultsWithCount struct {
+	TopUserByTagResults []*TopUserByTagResult `json:"top_user_by_tag_result"`
+	TotalCount          int64                 `json:"total_count"`
+}
+
+func (o *TopUserByTagResultsWithCount) ToJson() []byte {
+	b, _ := json.Marshal(o)
+	return b
+}
+
+type TopPostByTagResultsWithCount struct {
+	TopPostByTagResults []*TopPostByTagResult `json:"top_post_by_tag_result"`
+	TotalCount          int64                 `json:"total_count"`
+}
+
+func (o *TopPostByTagResultsWithCount) ToJson() []byte {
+	b, _ := json.Marshal(o)
+	return b
 }

@@ -108,8 +108,8 @@ func (a *App) GetCollectionPostsPage(collectionId string, page, perPage int) (*m
 	return a.Srv.Store.Collection().GetPosts(collectionId, page*perPage, perPage)
 }
 
-func (a *App) GetCollectionsForTeam(teamId string, offset int, limit int) (*model.CollectionList, *model.AppError) {
-	return a.Srv.Store.Collection().GetCollectionsForTeam(teamId, offset, limit)
+func (a *App) GetCollectionsForTeam(teamId string, offset int, limit int, title string) (*model.CollectionList, *model.AppError) {
+	return a.Srv.Store.Collection().GetCollectionsForTeam(teamId, offset, limit, title)
 }
 
 func (a *App) RemovePostFromCollection(collectionId string, postId string) *model.AppError {

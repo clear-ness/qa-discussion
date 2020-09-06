@@ -2,17 +2,21 @@ package searchlayer
 
 import (
 	"github.com/clear-ness/qa-discussion/model"
-	"github.com/clear-ness/qa-discussion/search"
+	"github.com/clear-ness/qa-discussion/services/search"
 	"github.com/clear-ness/qa-discussion/store"
 )
 
 type SearchStore struct {
 	store.Store
-	post   *SearchPostStore
-	config *model.Config
+	post             *SearchPostStore
+	vote             *SearchVoteStore
+	userPointHistory *SearchUserPointHistoryStore
+	postViewsHistory *SearchPostViewsHistoryStore
+	config           *model.Config
+	esBackend        *search.ESBackend
 }
 
-func NewSearchLayer(baseStore store.Store, cfg *model.Config) {
+func NewSearchLayer(baseStore store.Store, cfg *model.Config) *SearchStore {
 	searchStore := &SearchStore{
 		Store:  baseStore,
 		config: cfg,
@@ -22,28 +26,51 @@ func NewSearchLayer(baseStore store.Store, cfg *model.Config) {
 		PostStore: baseStore.Post(),
 		rootStore: searchStore,
 	}
+
+	searchStore.vote = &SearchVoteStore{
+		VoteStore: baseStore.Vote(),
+		rootStore: searchStore,
+	}
+
+	searchStore.userPointHistory = &SearchUserPointHistoryStore{
+		UserPointHistoryStore: baseStore.UserPointHistory(),
+		rootStore:             searchStore,
+	}
+
+	searchStore.postViewsHistory = &SearchPostViewsHistoryStore{
+		PostViewsHistoryStore: baseStore.PostViewsHistory(),
+		rootStore:             searchStore,
+	}
+
+	setting := *cfg
+	esBackend, err := search.NewESBackend(&setting.SearchSettings)
+	if err != nil {
+		return nil
+	}
+	searchStore.esBackend = esBackend
+
+	return searchStore
 }
 
 func (s *SearchStore) Post() store.PostStore {
 	return s.post
 }
 
-func (s *SearchStore) setupIndex(mapping string, indexName string) error {
-	return NewESBackend(s.config.SearchSettings, indexName).CreateIndex(mapping)
+func (s *SearchStore) Vote() store.VoteStore {
+	return s.vote
+}
+
+func (s *SearchStore) UserPointHistory() store.UserPointHistoryStore {
+	return s.userPointHistory
+}
+
+func (s *SearchStore) PostViewsHistory() store.PostViewsHistoryStore {
+	return s.postViewsHistory
 }
 
 func (s *SearchStore) SetupIndexes() {
-	s.post.setupIndex()
-	//s.user.setupIndex()
-	//s.team.setupIndex()
-}
-
-func (s *SearchStore) indexPost(*model.Post post) error {
-	esPost:= ESPostFromPost(post)
-	return NewESBackend(s.config.SearchSettings, INDEX_NAME_POSTS).IndexESPost(esPost)
-}
-
-func (s *SearchStore) deletePost(*model.Post post) error {
-	esPost:= ESPostFromPost(post)
-	return NewESBackend(s.config.SearchSettings, INDEX_NAME_POSTS).deleteESPost(esPost)
+	s.post.SetupIndex()
+	s.vote.SetupIndex()
+	s.userPointHistory.SetupIndex()
+	s.postViewsHistory.SetupIndex()
 }

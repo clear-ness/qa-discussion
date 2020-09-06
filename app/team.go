@@ -635,3 +635,28 @@ func (a *App) UpdateTeamMemberType(teamId string, userId string, newType string)
 
 	return member, nil
 }
+
+func (a *App) GetAnalytics(analyticKey string, teamId string) (model.Analytics, *model.AppError) {
+	if analyticKey == "answered_rate" {
+		var rows model.Analytics = make([]*model.Analytic, 1)
+		rows[0] = &model.Analytic{Name: "answered_rate", Value: 0}
+
+		rate, err := a.Srv.Store.Post().GetAnsweredRate(teamId)
+		if err != nil {
+			return nil, err
+		}
+		rows[0].Value = rate
+
+		return rows, nil
+	} else if analyticKey == "post_counts_day" {
+		return a.Srv.Store.Post().AnalyticsPostCounts(teamId)
+	} else if analyticKey == "active_author_counts_day" {
+		return a.Srv.Store.Post().AnalyticsActiveAuthorCounts(teamId)
+	} else if analyticKey == "post_views_counts_day" {
+		return a.Srv.Store.PostViewsHistory().AnalyticsPostViewsHistoryCounts(teamId)
+	} else if analyticKey == "up_vote_counts_day" {
+		return a.Srv.Store.Vote().AnalyticsVoteCounts(teamId, model.VOTE_TYPE_UP_VOTE)
+	}
+
+	return nil, nil
+}

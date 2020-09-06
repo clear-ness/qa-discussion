@@ -19,6 +19,7 @@ CREATE TABLE `Posts` (
   `Points` int(11) DEFAULT NULL,
   `AnswerCount` int(11) DEFAULT NULL,
   `FlagCount` int(11) DEFAULT NULL,
+  `Views` int(11) DEFAULT NULL,
   `ProtectedAt` bigint(20) DEFAULT NULL,
   `LockedAt` bigint(20) DEFAULT NULL,
   `CreateAt` bigint(20) DEFAULT NULL,

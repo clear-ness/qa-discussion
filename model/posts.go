@@ -69,3 +69,13 @@ func PostsWithCountFromJson(data io.Reader) *PostsWithCount {
 	json.NewDecoder(data).Decode(&o)
 	return o
 }
+
+type RelatedPostSearchResultsWithCount struct {
+	RelatedPostSearchResults []*RelatedPostSearchResult `json:"related_post_search_results"`
+	TotalCount               int64                      `json:"total_count"`
+}
+
+func (o *RelatedPostSearchResultsWithCount) ToJson() []byte {
+	b, _ := json.Marshal(o)
+	return b
+}

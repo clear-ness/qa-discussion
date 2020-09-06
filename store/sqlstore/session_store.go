@@ -88,3 +88,25 @@ func (me SqlSessionStore) RemoveByUserId(userId string) *model.AppError {
 	}
 	return nil
 }
+
+func (me SqlSessionStore) GetSessions(userId string) ([]*model.Session, *model.AppError) {
+	var sessions []*model.Session
+	if _, err := me.GetReplica().Select(&sessions, "SELECT * FROM Sessions WHERE UserId = :UserId ORDER BY CreateAt DESC", map[string]interface{}{"UserId": userId}); err != nil {
+		return nil, model.NewAppError("SqlSessionStore.GetSessions", "store.sql_session.get_sessions.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	teamMembers, err := me.Team().GetTeamsForUser(userId)
+	if err != nil {
+		return nil, model.NewAppError("SqlSessionStore.GetSessions", "store.sql_session.get_sessions.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	for _, session := range sessions {
+		session.TeamMembers = make([]*model.TeamMember, 0, len(teamMembers))
+		for _, tm := range teamMembers {
+			if tm.DeleteAt == 0 {
+				session.TeamMembers = append(session.TeamMembers, tm)
+			}
+		}
+	}
+	return sessions, nil
+}

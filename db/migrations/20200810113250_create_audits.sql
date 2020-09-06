@@ -1,4 +1,7 @@
 -- +goose Up
+-- TODO: TeamIdを用意、
+-- teamに所属している限りはteam関連のログが本人も見れるが、
+-- 脱退すれば本人は見れなくなり、team adminなら見れる。
 -- SQL in this section is executed when the migration is applied.
 CREATE TABLE `Audits` (
   `Id` varchar(26) NOT NULL,

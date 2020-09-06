@@ -36,23 +36,25 @@ const (
 )
 
 type ServiceSettings struct {
-	SiteURL                         *string
-	ListenAddress                   *string
-	ConnectionSecurity              *string
-	TLSCertFile                     *string
-	TLSKeyFile                      *string
-	ReadTimeout                     *int
-	WriteTimeout                    *int
-	TLSMinVer                       *string
-	EnableDeveloper                 *bool
-	EnableAdminUser                 *bool
-	UseLetsEncrypt                  *bool
-	LetsEncryptCertificateCacheFile *string
-	MaximumLoginAttempts            *int
-	Forward80To443                  *bool
-	WebserverMode                   *string `restricted:"true"`
-	SessionLengthWebInDays          *int
-	TrustedProxyIPHeader            []string
+	SiteURL                             *string
+	ListenAddress                       *string
+	ConnectionSecurity                  *string
+	TLSCertFile                         *string
+	TLSKeyFile                          *string
+	ReadTimeout                         *int
+	WriteTimeout                        *int
+	TLSMinVer                           *string
+	EnableDeveloper                     *bool
+	EnableAdminUser                     *bool
+	UseLetsEncrypt                      *bool
+	LetsEncryptCertificateCacheFile     *string
+	MaximumLoginAttempts                *int
+	Forward80To443                      *bool
+	WebserverMode                       *string `restricted:"true"`
+	SessionLengthWebInDays              *int
+	SessionLengthOAuthInDays            *int `restricted:"true"`
+	TrustedProxyIPHeader                []string
+	AllowedUntrustedInternalConnections *string `restricted:"true"`
 
 	AllowCorsFrom        *string
 	CorsExposedHeaders   *string
@@ -131,8 +133,16 @@ func (s *ServiceSettings) SetDefaults() {
 		s.SessionLengthWebInDays = NewInt(180)
 	}
 
+	if s.SessionLengthOAuthInDays == nil {
+		s.SessionLengthOAuthInDays = NewInt(30)
+	}
+
 	if s.TrustedProxyIPHeader == nil {
 		s.TrustedProxyIPHeader = []string{HEADER_FORWARDED, HEADER_REAL_IP}
+	}
+
+	if s.AllowedUntrustedInternalConnections == nil {
+		s.AllowedUntrustedInternalConnections = NewString("")
 	}
 
 	if s.AllowCorsFrom == nil {

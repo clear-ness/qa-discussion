@@ -176,11 +176,17 @@ func (s SqlCollectionStore) saveMultiplePosts(colPosts []*model.CollectionPost) 
 	return colPosts, nil
 }
 
-func (s SqlCollectionStore) GetCollectionsForTeam(teamId string, offset int, limit int) (*model.CollectionList, *model.AppError) {
+func (s SqlCollectionStore) GetCollectionsForTeam(teamId string, offset int, limit int, title string) (*model.CollectionList, *model.AppError) {
 	args := map[string]interface{}{
 		"TeamId": teamId,
 		"Limit":  limit,
 		"Offset": offset,
+	}
+
+	fulltextClause := ""
+	if title != "" {
+		fulltextClause = "AND MATCH(Title) AGAINST (:Title IN BOOLEAN MODE)"
+		args["Title"] = title
 	}
 
 	cols := &model.CollectionList{}
@@ -192,6 +198,7 @@ func (s SqlCollectionStore) GetCollectionsForTeam(teamId string, offset int, lim
 		WHERE
 			Collections.TeamId = :TeamId
 			AND Collections.DeleteAt = 0
+			`+fulltextClause+`
 		ORDER BY Collections.CreateAt DESC
 		LIMIT :Limit
 		OFFSET :Offset

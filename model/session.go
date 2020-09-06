@@ -16,6 +16,7 @@ type Session struct {
 	ExpiresAt   int64         `db:"ExpiresAt" json:"expires_at"`
 	UserId      string        `db:"UserId" json:"user_id"`
 	Props       StringMap     `db:"Props" json:"props"`
+	IsOAuth     bool          `db:"IsOAuth" json:"is_oauth"`
 	TeamMembers []*TeamMember `json:"team_members" db:"-"`
 }
 

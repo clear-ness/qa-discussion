@@ -5,6 +5,9 @@ CREATE TABLE `UserPointHistory` (
   `UserId` varchar(26) NOT NULL,
   `TeamId` varchar(26) DEFAULT NULL,
   `Type` varchar(26) DEFAULT NULL,
+  `PostId` varchar(26) DEFAULT NULL,
+  `PostType` varchar(26) DEFAULT NULL,
+  `Tags` text,
   `Points` int(11) DEFAULT NULL,
   `CreateAt` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`Id`)

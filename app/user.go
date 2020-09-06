@@ -470,6 +470,7 @@ func (a *App) DeleteUser(userId string, sessionUserId string) *model.AppError {
 	}
 
 	// TODO: teamに所属している場合、teamMemberやgroupMemberを削除
+	// (キャッシュも消える)
 
 	// normal users can self delete
 	if err := a.Srv.Store.User().Delete(userId, model.GetMillis(), sessionUserId); err != nil {

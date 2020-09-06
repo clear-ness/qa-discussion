@@ -7,6 +7,7 @@ CREATE TABLE `Sessions` (
   `ExpiresAt` bigint(20) DEFAULT NULL,
   `UserId` varchar(26) DEFAULT NULL,
   `Props` text,
+  `IsOAuth` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`Id`),
   KEY `idx_sessions_user_id` (`UserId`),
   KEY `idx_sessions_token` (`Token`),

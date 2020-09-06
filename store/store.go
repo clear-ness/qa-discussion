@@ -40,7 +40,11 @@ type Store interface {
 	UserFavoritePost() UserFavoritePostStore
 	FileInfo() FileInfoStore
 	NotificationSetting() NotificationSettingStore
+	PostViewsHistory() PostViewsHistoryStore
+	Webhook() WebhookStore
+	WebhooksHistory() WebhooksHistoryStore
 	Audit() AuditStore
+	OAuth() OAuthStore
 }
 
 type TeamStore interface {
@@ -98,7 +102,7 @@ type CollectionStore interface {
 	Get(id string) (*model.Collection, *model.AppError)
 	GetPost(collectionId string, postId string) (*model.CollectionPost, *model.AppError)
 	GetPosts(collectionId string, offset, limit int) (*model.CollectionPosts, *model.AppError)
-	GetCollectionsForTeam(teamId string, offset int, limit int) (*model.CollectionList, *model.AppError)
+	GetCollectionsForTeam(teamId string, offset int, limit int, title string) (*model.CollectionList, *model.AppError)
 	GetTeamCollections(teamId string) (*model.CollectionList, *model.AppError)
 	Save(collection *model.Collection, maxCollectionsPerTeam int64) (*model.Collection, *model.AppError)
 	SavePost(colPost *model.CollectionPost) (*model.CollectionPost, *model.AppError)
@@ -138,6 +142,7 @@ type SessionStore interface {
 	Save(session *model.Session) (*model.Session, *model.AppError)
 	Remove(sessionIdOrToken string) *model.AppError
 	RemoveByUserId(userId string) *model.AppError
+	GetSessions(userId string) ([]*model.Session, *model.AppError)
 }
 
 type PostStore interface {
@@ -145,9 +150,9 @@ type PostStore interface {
 	SaveAnswer(post *model.Post) (*model.Post, *model.AppError)
 	SaveComment(post *model.Post) (*model.Post, *model.AppError)
 	Update(newPost *model.Post, oldPost *model.Post) (*model.Post, *model.AppError)
-	GetSingle(id string) (*model.Post, *model.AppError)
+	GetSingle(id string, includeDeleted bool) (*model.Post, *model.AppError)
 	GetSingleByType(id string, postType string) (*model.Post, *model.AppError)
-	GetPostCountByUserId(postType string, userId string, teamId string) (int64, *model.AppError)
+	GetPostCount(postType string, userId string, teamId string, fromDate int64, toDate int64) (int64, *model.AppError)
 	GetPostsByIds(postIds []string) (model.Posts, *model.AppError)
 	GetPosts(options *model.GetPostsOptions, getCount bool) (model.Posts, int64, *model.AppError)
 	SearchPosts(paramsList []*model.SearchParams, sortType string, page, perPage int, teamId string) (model.Posts, int64, *model.AppError)
@@ -157,29 +162,51 @@ type PostStore interface {
 	DeleteAnswer(postId string, time int64, deleteById string) *model.AppError
 	DeleteComment(postId string, time int64, deleteById string) *model.AppError
 	SelectBestAnswer(postId, bestId string) *model.AppError
-	UpVotePost(postId string, userId string) *model.AppError
-	CancelUpVotePost(postId string, userId string) *model.AppError
-	DownVotePost(postId string, userId string) *model.AppError
-	CancelDownVotePost(postId string, userId string) *model.AppError
-	FlagPost(postId string, userId string) *model.AppError
-	CancelFlagPost(postId string, userId string) *model.AppError
+	UpVotePost(postId string, userId string) (*model.Vote, *model.AppError)
+	CancelUpVotePost(postId string, userId string) (*model.Vote, *model.AppError)
+	DownVotePost(postId string, userId string) (*model.Vote, *model.AppError)
+	CancelDownVotePost(postId string, userId string) (*model.Vote, *model.AppError)
+	FlagPost(postId string, userId string) (*model.Vote, *model.AppError)
+	CancelFlagPost(postId string, userId string) (*model.Vote, *model.AppError)
 	LockPost(postId string, time int64, userId string) *model.AppError
 	CancelLockPost(postId string, userId string) *model.AppError
 	ProtectPost(postId string, time int64, userId string) *model.AppError
 	CancelProtectPost(postId string, userId string) *model.AppError
+	ViewPost(postId string, teamId string, userId string, ipAddress string, count int) *model.AppError
+	SavePostViewsHistory(postId string, teamId string, userId string, ipAddress string, count int, time int64) (*model.PostViewsHistory, *model.AppError)
+	RelatedSearch(term string, limit int) ([]*model.RelatedPostSearchResult, *model.AppError)
+	HotSearch(interval string, teamId string, limit int) ([]string, *model.AppError)
+	GetCurrentRevisionForPost(postId, teamId string) (int64, *model.AppError)
+	GetRevisionPost(postId, teamId string, offset int) (*model.Post, *model.AppError)
+	GetAnsweredRate(teamId string) (float64, *model.AppError)
+	AnalyticsPostCounts(teamId string) (model.Analytics, *model.AppError)
+	AnalyticsActiveAuthorCounts(teamId string) (model.Analytics, *model.AppError)
+	SaveUserPointHistory(history *model.UserPointHistory) (*model.UserPointHistory, *model.AppError)
 }
 
 type TagStore interface {
 	GetTags(options *model.GetTagsOptions) (model.Tags, *model.AppError)
+	GetTagsCount(options *model.GetTagsOptions) (int64, *model.AppError)
+	CreateTags(addedTags []string, time int64, teamId string, tagType string) *model.AppError
 }
 
 type VoteStore interface {
 	GetVotesBeforeTime(time int64, userId string, page, perPage int, excludeFlag bool, getCount bool, teamId string) ([]*model.Vote, int64, *model.AppError)
 	GetByPostIdForUser(userId string, postId string, voteType string) (*model.Vote, *model.AppError)
+	GetVoteTypesForPost(userId string, postId string) ([]string, *model.AppError)
+	CreateReviewVote(post *model.Post, userId string, tagContents string, revision int64) (*model.Vote, *model.AppError)
+	GetRejectedReviewsCount(postId string, currentRevision int64) (int64, *model.AppError)
+	RejectReviewsForPost(postId string, rejectedBy string, revision int64) *model.AppError
+	CompleteReviewsForPost(postId string, completedBy string, revision int64) *model.AppError
+	GetReviews(options *model.SearchReviewsOptions, getCount bool) ([]*model.Vote, int64, *model.AppError)
+	AnalyticsVoteCounts(teamId string, voteType string) (model.Analytics, *model.AppError)
 }
 
 type UserPointHistoryStore interface {
 	GetUserPointHistoryBeforeTime(time int64, userId string, page, perPage int, teamId string) ([]*model.UserPointHistory, *model.AppError)
+	TopAskersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopUserByTagResult, *model.AppError)
+	TopAnswerersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopUserByTagResult, *model.AppError)
+	TopAnswersByTag(interval string, teamId string, tag string, limit int) ([]*model.TopPostByTagResult, *model.AppError)
 }
 
 type InboxMessageStore interface {
@@ -210,8 +237,47 @@ type NotificationSettingStore interface {
 	Save(userId, inboxInterval string) *model.AppError
 }
 
+type PostViewsHistoryStore interface {
+	GetViewsHistoryCount(teamId string, fromDate int64, toDate int64) (int64, *model.AppError)
+	AnalyticsPostViewsHistoryCounts(teamId string) (model.Analytics, *model.AppError)
+}
+
+type WebhookStore interface {
+	GetByTeam(teamId string, userId string, offset, limit int) ([]*model.Webhook, *model.AppError)
+	Save(webhook *model.Webhook) (*model.Webhook, *model.AppError)
+	Get(id string) (*model.Webhook, *model.AppError)
+	Update(hook *model.Webhook) (*model.Webhook, *model.AppError)
+	Delete(webhookId string, time int64) *model.AppError
+}
+
+type WebhooksHistoryStore interface {
+	LogWebhookEvent(history *model.WebhooksHistory) error
+	GetWebhooksHistoriesPage(teamId string, offset, limit int) ([]*model.WebhooksHistory, *model.AppError)
+}
+
 type AuditStore interface {
 	Get(user_id string, offset int, limit int) (model.Audits, *model.AppError)
 	Save(audit *model.Audit) *model.AppError
 	PermanentDeleteByUser(userId string) *model.AppError
+}
+
+type OAuthStore interface {
+	SaveApp(app *model.OAuthApp) (*model.OAuthApp, *model.AppError)
+	UpdateApp(app *model.OAuthApp) (*model.OAuthApp, *model.AppError)
+	GetApp(id string) (*model.OAuthApp, *model.AppError)
+	GetAppByUserId(userId string, offset, limit int) ([]*model.OAuthApp, *model.AppError)
+	DeleteApp(id string) *model.AppError
+	GetAuthorizedApps(userId string, offset, limit int) ([]*model.OAuthApp, *model.AppError)
+	SaveAuthData(authData *model.AuthData) (*model.AuthData, *model.AppError)
+	SaveAuthorizedApp(app *model.OAuthAuthorizedApp) *model.AppError
+	GetAccessData(token string) (*model.AccessData, *model.AppError)
+	RemoveAccessData(token string) *model.AppError
+	SaveAccessData(accessData *model.AccessData) (*model.AccessData, *model.AppError)
+	GetAuthData(code string) (*model.AuthData, *model.AppError)
+	RemoveAuthData(code string) *model.AppError
+	GetPreviousAccessData(userId, clientId string) (*model.AccessData, *model.AppError)
+	UpdateAccessData(accessData *model.AccessData) (*model.AccessData, *model.AppError)
+	GetAccessDataByRefreshToken(token string) (*model.AccessData, *model.AppError)
+	GetAccessDataByUserForApp(userId, clientId string) ([]*model.AccessData, *model.AppError)
+	DeleteAuthorizedApp(userId string, clientId string) *model.AppError
 }

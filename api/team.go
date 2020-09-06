@@ -48,6 +48,8 @@ func (api *API) InitTeam() {
 	api.BaseRoutes.TeamMember.Handle("/type", api.ApiSessionRequired(updateTeamMemberType)).Methods("PUT")
 	// Delete the team member object for a user, effectively removing them from a team.
 	api.BaseRoutes.TeamMember.Handle("", api.ApiSessionRequired(removeTeamMember)).Methods("DELETE")
+
+	api.BaseRoutes.Team.Handle("", api.ApiSessionRequired(getAnalytics)).Methods("GET")
 }
 
 func createTeam(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -485,4 +487,41 @@ func removeTeamMember(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	ReturnStatusOK(w)
+}
+
+func getAnalytics(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	team, err := c.App.GetTeam(c.Params.TeamId)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, team.Id, model.PERMISSION_MANAGE_TEAM) {
+		c.SetPermissionError(model.PERMISSION_MANAGE_TEAM)
+		return
+	}
+
+	analyticKey := r.URL.Query().Get("analytic_key")
+	if analyticKey == "" {
+		c.SetInvalidParam("analytic_key")
+		return
+	}
+
+	rows, err := c.App.GetAnalytics(team.Id, analyticKey)
+	if err != nil {
+		c.Err = err
+		return
+	}
+
+	if rows == nil {
+		c.SetInvalidParam("analytic_key")
+		return
+	}
+
+	w.Write([]byte(rows.ToJson()))
 }

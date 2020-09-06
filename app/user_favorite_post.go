@@ -76,7 +76,7 @@ func (a *App) GetUserFavoritePostsCountByPostId(postId string) (int64, *model.Ap
 }
 
 func (a *App) CreateUserFavoritePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't create the favorite post", mlog.Err(err))
 		return err
@@ -94,7 +94,7 @@ func (a *App) CreateUserFavoritePost(postId string, userId string) *model.AppErr
 }
 
 func (a *App) DeleteUserFavoritePost(postId string, userId string) *model.AppError {
-	post, err := a.Srv.Store.Post().GetSingle(postId)
+	post, err := a.Srv.Store.Post().GetSingle(postId, false)
 	if err != nil {
 		mlog.Error("Couldn't delete the favorite post", mlog.Err(err))
 		return err
