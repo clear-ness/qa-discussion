@@ -22,7 +22,7 @@ func (a *App) GetPostCount(userId string, postType string, teamId string) (int64
 	return a.Srv.Store.Post().GetPostCount(postType, userId, teamId, 0, 0)
 }
 
-func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post, *model.AppError) {
+func (a *App) CreateQuestion(post *model.Post, group *model.UserGroup) (*model.Post, *model.AppError) {
 	user, err := a.GetUser(post.UserId)
 	if err != nil || user == nil {
 		return nil, model.NewAppError("CreateQuestion", "api.post.create_question.post_user.app_error", nil, "", http.StatusBadRequest)
@@ -91,12 +91,14 @@ func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post,
 			message.UserId = member.UserId
 
 			messages = append(messages, message)
-
-			_, err = a.Srv.Store.InboxMessage().SaveMultipleInboxMessages(messages)
-			if err != nil {
-				return nil, model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.save_multiple_inbox_messages.app_error", nil, err.Error(), http.StatusInternalServerError)
-			}
 		}
+
+		_, err = a.Srv.Store.InboxMessage().SaveMultipleInboxMessages(messages)
+		if err != nil {
+			return nil, model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.save_multiple_inbox_messages.app_error", nil, err.Error(), http.StatusInternalServerError)
+		}
+
+		a.PublishInboxMessages(messages)
 	}
 
 	if post.TeamId != "" {
@@ -104,6 +106,15 @@ func (a *App) CreateQuestion(post *model.Post, group *model.Group) (*model.Post,
 	}
 
 	return rpost, nil
+}
+
+func (a *App) PublishInboxMessages(messages []*model.InboxMessage) {
+	for _, message := range messages {
+		event := model.NewWebSocketEvent(model.WEBSOCKET_EVENT_INBOX_MESSAGE, "", message.UserId, nil)
+		event.Add("user_id", message.UserId)
+
+		a.Srv.Publish(event)
+	}
 }
 
 func (a *App) tryWebhook(post *model.Post, user *model.User) {
@@ -165,17 +176,44 @@ func (a *App) CreateAnswer(post *model.Post) (*model.Post, *model.AppError) {
 		DeleteAt:    0,
 	}
 
-	rpost, err := a.Srv.Store.Post().SaveAnswer(post)
+	_, err = a.Srv.Store.Post().SaveAnswer(post)
 	if err != nil {
 		mlog.Error("Couldn't save the answer", mlog.Err(err))
 		return nil, err
 	}
 
+	curTime := model.GetMillis()
+
+	max := len(post.Content)
+	if max > model.INBOX_MESSAGE_CONTENT_MAX_LENGTH {
+		max = model.INBOX_MESSAGE_CONTENT_MAX_LENGTH
+	}
+	content := post.Content[0:max]
+
+	message := &model.InboxMessage{
+		Type:       model.INBOX_MESSAGE_TYPE_ANSWER,
+		Content:    content,
+		UserId:     parentQuestion.UserId,
+		SenderId:   post.UserId,
+		QuestionId: parentQuestion.Id,
+		Title:      parentQuestion.Title,
+		AnswerId:   post.Id,
+		TeamId:     post.TeamId,
+		CreateAt:   curTime,
+	}
+
+	_, err = a.Srv.Store.InboxMessage().SaveInboxMessage(message)
+	if err != nil {
+		return nil, model.NewAppError("CreateAnswer", "api.post.create_answer.save_inbox_message.app_error", nil, err.Error(), http.StatusInternalServerError)
+	}
+
+	a.PublishInboxMessages([]*model.InboxMessage{message})
+
 	if post.TeamId != "" {
 		a.tryWebhook(post, user)
 	}
 
-	return rpost, nil
+	return post, nil
 }
 
 func (a *App) CreateComment(post *model.Post) (*model.Post, *model.AppError) {
@@ -300,6 +338,8 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 			return model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.save_inbox_message.app_error", nil, err.Error(), http.StatusInternalServerError)
 		}
 
+		a.PublishInboxMessages([]*model.InboxMessage{message})
+
 		return nil
 	}
 
@@ -385,6 +425,8 @@ func (a *App) saveInboxMessagesForComment(post *model.Post, forceInformAuthor bo
 	if err != nil {
 		return model.NewAppError("saveInboxMessagesForComment", "api.post.save_inbox_messages_for_comment.save_multiple_inbox_messages.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
+
+	a.PublishInboxMessages(messages)
 
 	return nil
 }

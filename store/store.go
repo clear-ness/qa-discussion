@@ -26,7 +26,7 @@ type Store interface {
 
 	Team() TeamStore
 	TeamMemberHistory() TeamMemberHistoryStore
-	Group() GroupStore
+	UserGroup() UserGroupStore
 	GroupMemberHistory() GroupMemberHistoryStore
 	Collection() CollectionStore
 	User() UserStore
@@ -45,6 +45,7 @@ type Store interface {
 	WebhooksHistory() WebhooksHistoryStore
 	Audit() AuditStore
 	OAuth() OAuthStore
+	Status() StatusStore
 }
 
 type TeamStore interface {
@@ -73,17 +74,17 @@ type TeamMemberHistoryStore interface {
 	LogLeaveEvent(userId string, teamId string, leaveTime int64) error
 }
 
-type GroupStore interface {
-	GetTeamGroups(teamId string) (*model.GroupList, *model.AppError)
-	Save(group *model.Group, maxGroupsPerTeam int64) (*model.Group, *model.AppError)
+type UserGroupStore interface {
+	GetTeamGroups(teamId string) (*model.UserGroupList, *model.AppError)
+	Save(group *model.UserGroup, maxGroupsPerTeam int64) (*model.UserGroup, *model.AppError)
 	SaveMember(member *model.GroupMember) (*model.GroupMember, *model.AppError)
 	SaveMultipleMembers(members []*model.GroupMember) ([]*model.GroupMember, *model.AppError)
-	GetGroupsForTeam(teamId string, groupType string, offset int, limit int) (*model.GroupList, *model.AppError)
-	AutocompleteInTeam(teamId string, term string, groupType string, includeDeleted bool) (*model.GroupList, *model.AppError)
-	GetGroups(teamId string, userId string, includeDeleted bool) (*model.GroupList, *model.AppError)
-	Get(id string) (*model.Group, *model.AppError)
+	GetGroupsForTeam(teamId string, groupType string, offset int, limit int) (*model.UserGroupList, *model.AppError)
+	AutocompleteInTeam(teamId string, term string, groupType string, includeDeleted bool) (*model.UserGroupList, *model.AppError)
+	GetGroups(teamId string, userId string, includeDeleted bool) (*model.UserGroupList, *model.AppError)
+	Get(id string) (*model.UserGroup, *model.AppError)
 	GetAllGroupMembersForUser(userId string) (map[string]string, *model.AppError)
-	Update(group *model.Group) (*model.Group, *model.AppError)
+	Update(group *model.UserGroup) (*model.UserGroup, *model.AppError)
 	Delete(groupId string, time int64) *model.AppError
 	GetMembers(groupId string, memberType string, offset, limit int) (*model.GroupMembers, *model.AppError)
 	GetMember(groupId string, userId string) (*model.GroupMember, *model.AppError)
@@ -280,4 +281,11 @@ type OAuthStore interface {
 	GetAccessDataByRefreshToken(token string) (*model.AccessData, *model.AppError)
 	GetAccessDataByUserForApp(userId, clientId string) ([]*model.AccessData, *model.AppError)
 	DeleteAuthorizedApp(userId string, clientId string) *model.AppError
+}
+
+type StatusStore interface {
+	Get(userId string) (*model.Status, *model.AppError)
+	GetByIds(userIds []string) ([]*model.Status, error)
+	SaveOrUpdate(status *model.Status) error
+	UpdateLastActivityAt(userId string, lastActivityAt int64) error
 }

@@ -1,6 +1,6 @@
 -- +goose Up
 -- SQL in this section is executed when the migration is applied.
-CREATE TABLE `Groups` (
+CREATE TABLE `UserGroups` (
   `Id` varchar(26) NOT NULL,
   `Type` varchar(26) DEFAULT NULL,
   `CreateAt` bigint(20) DEFAULT NULL,
@@ -12,13 +12,12 @@ CREATE TABLE `Groups` (
   `UserId` varchar(26) DEFAULT NULL,
   PRIMARY KEY (`Id`),
   UNIQUE KEY `Name` (`Name`,`TeamId`),
-  KEY `idx_groups_team_id` (`TeamId`),
-  KEY `idx_groups_name` (`Name`),
-  KEY `idx_groups_update_at` (`UpdateAt`),
-  KEY `idx_groups_create_at` (`CreateAt`),
-  KEY `idx_groups_delete_at` (`DeleteAt`)
+  KEY `idx_user_groups_team_id` (`TeamId`),
+  KEY `idx_user_groups_update_at` (`UpdateAt`),
+  KEY `idx_user_groups_create_at` (`CreateAt`),
+  KEY `idx_user_groups_delete_at` (`DeleteAt`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- +goose Down
 -- SQL in this section is executed when the migration is rolled back.
-DROP TABLE IF EXISTS `Groups`;
+DROP TABLE IF EXISTS `UserGroups`;

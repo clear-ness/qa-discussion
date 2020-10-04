@@ -102,7 +102,7 @@ func (a *App) SessionHasPermissionToGroup(session model.Session, groupId string,
 		return false
 	}
 
-	memberTypes, err := a.Srv.Store.Group().GetAllGroupMembersForUser(session.UserId)
+	memberTypes, err := a.Srv.Store.UserGroup().GetAllGroupMembersForUser(session.UserId)
 	if err == nil {
 		if memberType, ok := memberTypes[groupId]; ok {
 			if a.GroupMemberHasPermissionTo(memberType, permission) {

@@ -209,8 +209,12 @@ func (u *User) SanitizeProfile(options map[string]bool) {
 }
 
 func (u *User) SanitizeInput() {
+	u.Type = USER_TYPE_NORMAL
 	u.EmailVerified = false
+	u.Points = 0
+	u.LastInboxMessageViewed = 0
 	u.LastPictureUpdate = 0
+	u.FailedAttempts = 0
 }
 
 func UserFromJson(data io.Reader) *User {

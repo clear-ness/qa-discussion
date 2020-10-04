@@ -15,7 +15,7 @@ const (
 	GROUP_SEARCH_DEFAULT_LIMIT   = 10
 )
 
-type Group struct {
+type UserGroup struct {
 	Id          string `db:"Id, primarykey" json:"id"`
 	Type        string `db:"Type" json:"type"`
 	CreateAt    int64  `db:"CreateAt" json:"create_at"`
@@ -27,13 +27,13 @@ type Group struct {
 	UserId      string `db:"UserId" json:"user_id"`
 }
 
-func GroupFromJson(data io.Reader) *Group {
-	var o *Group
+func UserGroupFromJson(data io.Reader) *UserGroup {
+	var o *UserGroup
 	json.NewDecoder(data).Decode(&o)
 	return o
 }
 
-func (o *Group) PreSave() {
+func (o *UserGroup) PreSave() {
 	if o.Id == "" {
 		o.Id = NewId()
 	}
@@ -48,53 +48,53 @@ func (o *Group) PreSave() {
 	o.UpdateAt = o.CreateAt
 }
 
-func (o *Group) IsValid() *AppError {
+func (o *UserGroup) IsValid() *AppError {
 	if len(o.Id) != 26 {
-		return NewAppError("Group.IsValid", "model.group.is_valid.id.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.id.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if o.Type != GROUP_TYPE_PUBLIC && o.Type != GROUP_TYPE_PRIVATE {
-		return NewAppError("Group.IsValid", "model.group.is_valid.type.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.type.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if o.CreateAt == 0 {
-		return NewAppError("Group.IsValid", "model.group.is_valid.create_at.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.create_at.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if o.UpdateAt == 0 {
-		return NewAppError("Group.IsValid", "model.group.is_valid.update_at.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.update_at.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if !IsValidGroupIdentifier(o.Name) {
-		return NewAppError("Group.IsValid", "model.group.is_valid.name.app_error", nil, "", http.StatusBadRequest)
+	if !IsValidUserGroupIdentifier(o.Name) {
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.name.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if len(o.Description) > GROUP_DESCRIPTION_MAX_LENGTH {
-		return NewAppError("Group.IsValid", "model.group.is_valid.description.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.description.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if len(o.TeamId) != 26 {
-		return NewAppError("Group.IsValid", "model.group.is_valid.team_id.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.team_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	if len(o.UserId) != 26 {
-		return NewAppError("Group.IsValid", "model.group.is_valid.user_id.app_error", nil, "", http.StatusBadRequest)
+		return NewAppError("UserGroup.IsValid", "model.group.is_valid.user_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	return nil
 }
 
-func (group *Group) ToJson() string {
+func (group *UserGroup) ToJson() string {
 	b, _ := json.Marshal(group)
 	return string(b)
 }
 
-func (o *Group) DeepCopy() *Group {
+func (o *UserGroup) DeepCopy() *UserGroup {
 	copy := *o
 	return &copy
 }
 
-func (o *Group) PreUpdate() {
+func (o *UserGroup) PreUpdate() {
 	o.UpdateAt = GetMillis()
 	o.Name = SanitizeUnicode(o.Name)
 	o.Description = SanitizeUnicode(o.Description)

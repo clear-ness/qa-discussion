@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 )
 
-type GroupList []*Group
+type UserGroupList []*UserGroup
 
-func (o *GroupList) ToJson() string {
+func (o *UserGroupList) ToJson() string {
 	if b, err := json.Marshal(o); err != nil {
 		return "[]"
 	} else {

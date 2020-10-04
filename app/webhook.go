@@ -8,7 +8,6 @@ import (
 
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
-	"github.com/clear-ness/qa-discussion/services/httpservice"
 	"github.com/clear-ness/qa-discussion/utils"
 )
 
@@ -101,7 +100,7 @@ func (a *App) doWebhookRequest(url string, body io.Reader, contentType string, h
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := httpservice.MakeClient(false).Do(req)
+	resp, err := a.HttpService.MakeClient(false).Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,8 @@ const (
 	SESSION_PROP_PLATFORM = "platform"
 	SESSION_PROP_OS       = "os"
 	SESSION_PROP_BROWSER  = "browser"
+
+	SESSION_CACHE_SIZE = 35000
 )
 
 type Session struct {
@@ -86,4 +88,22 @@ func (me *Session) GetCSRF() string {
 	}
 
 	return me.Props["csrf"]
+}
+
+func (me *Session) DeepCopy() *Session {
+	copySession := *me
+
+	if me.Props != nil {
+		copySession.Props = CopyStringMap(me.Props)
+	}
+
+	if me.TeamMembers != nil {
+		copySession.TeamMembers = make([]*TeamMember, len(me.TeamMembers))
+		for index, tm := range me.TeamMembers {
+			copySession.TeamMembers[index] = new(TeamMember)
+			*copySession.TeamMembers[index] = *tm
+		}
+	}
+
+	return &copySession
 }

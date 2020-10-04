@@ -95,6 +95,8 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 	api.BaseRoutes.Root = root
 	api.BaseRoutes.ApiRoot = root.PathPrefix(model.API_URL_SUFFIX).Subrouter()
 
+	api.BaseRoutes.User = api.BaseRoutes.ApiRoot.PathPrefix("/users/{user_id:[A-Za-z0-9]+}").Subrouter()
+
 	api.BaseRoutes.Teams = api.BaseRoutes.ApiRoot.PathPrefix("/teams").Subrouter()
 	api.BaseRoutes.TeamsForUser = api.BaseRoutes.User.PathPrefix("/teams").Subrouter()
 	api.BaseRoutes.Team = api.BaseRoutes.Teams.PathPrefix("/{team_id:[A-Za-z0-9]+}").Subrouter()
@@ -116,7 +118,6 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 	api.BaseRoutes.CollectionPost = api.BaseRoutes.CollectionPosts.PathPrefix("/{post_id:[A-Za-z0-9]+}").Subrouter()
 
 	api.BaseRoutes.Users = api.BaseRoutes.ApiRoot.PathPrefix("/users").Subrouter()
-	api.BaseRoutes.User = api.BaseRoutes.ApiRoot.PathPrefix("/users/{user_id:[A-Za-z0-9]+}").Subrouter()
 	api.BaseRoutes.UsersForTeam = api.BaseRoutes.Team.PathPrefix("/users").Subrouter()
 	api.BaseRoutes.UserForTeam = api.BaseRoutes.UsersForTeam.PathPrefix("/{user_id:[A-Za-z0-9]+}").Subrouter()
 
@@ -162,7 +163,7 @@ func Init(globalOptionsFunc app.AppOptionCreator, root *mux.Router) *API {
 	api.BaseRoutes.OAuthApp = api.BaseRoutes.OAuthApps.PathPrefix("/{app_id:[A-Za-z0-9]+}").Subrouter()
 
 	api.InitTeam()
-	api.InitGroup()
+	api.InitUserGroup()
 	api.InitCollection()
 	api.InitUser()
 	api.InitPost()

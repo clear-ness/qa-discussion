@@ -35,7 +35,7 @@ func (api *API) InitPost() {
 	api.BaseRoutes.Post.Handle("", api.ApiHandler(getPost)).Methods("GET")
 	api.BaseRoutes.PostForTeam.Handle("", api.ApiSessionRequired(getTeamPost)).Methods("GET")
 
-	api.BaseRoutes.Post.Handle("", api.ApiHandler(viewPost)).Methods("POST")
+	api.BaseRoutes.Post.Handle("/view", api.ApiHandler(viewPost)).Methods("POST")
 
 	api.BaseRoutes.Post.Handle("/comments", api.ApiHandler(getCommentsForPost)).Methods("GET")
 	api.BaseRoutes.PostForTeam.Handle("/comments", api.ApiSessionRequired(getCommentsForTeamPost)).Methods("GET")
@@ -95,6 +95,10 @@ func (api *API) InitPost() {
 	// Protected questions only allow answers by users with more than ~ reputation.
 	api.BaseRoutes.Post.Handle("/protect", api.ApiSessionRequired(protectPost)).Methods("POST")
 	api.BaseRoutes.Post.Handle("/cancel_protect", api.ApiSessionRequired(cancelProtectPost)).Methods("POST")
+
+	// TODO:
+	// 1. inboxMessageが作成される際、postが新規作成及び更新される際、post vote countを更新する際にwebSocketでも相手に通知する
+	// 2. statusテーブルを用意し、リアルタイムにユーザーのオンライン/オフライン状態を管理
 }
 
 func getQuestions(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -475,7 +479,7 @@ func createQuestionPost(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	post.UserId = c.App.Session.UserId
 
-	var group *model.Group
+	var group *model.UserGroup
 
 	if len(post.TeamId) == 26 {
 		// private askの場合

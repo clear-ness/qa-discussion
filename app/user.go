@@ -178,6 +178,8 @@ func (a *App) VerifyUserEmail(userId, email string) *model.AppError {
 		return err
 	}
 
+	a.ClearSessionCacheForUser(userId)
+
 	return nil
 }
 
@@ -271,6 +273,8 @@ func (a *App) UpdateUser(user *model.User) (*model.User, *model.AppError) {
 		})
 	}
 
+	a.ClearSessionCacheForUser(user.Id)
+
 	return userUpdate.New, nil
 }
 
@@ -294,6 +298,8 @@ func (a *App) UpdateUserType(userId string, newType string) (*model.User, *model
 	if err != nil {
 		return nil, err
 	}
+
+	a.ClearSessionCacheForUser(user.Id)
 
 	ruser := userUpdate.New
 
@@ -353,6 +359,8 @@ func (a *App) UpdatePassword(user *model.User, newPassword string) *model.AppErr
 	if err := a.Srv.Store.User().UpdatePassword(user.Id, hashedPassword); err != nil {
 		return model.NewAppError("UpdatePassword", "api.user.update_password.failed.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
+
+	a.ClearSessionCacheForUser(user.Id)
 
 	return nil
 }
@@ -577,7 +585,7 @@ func (a *App) CreateUserWithToken(user *model.User, token *model.Token) (*model.
 		return nil, err
 	}
 
-	if err := a.JoinUserToTeam(team, ruser, ""); err != nil {
+	if err := a.JoinUserToTeam(team, ruser, false); err != nil {
 		return nil, err
 	}
 
@@ -606,7 +614,7 @@ func (a *App) CreateUserWithInviteId(user *model.User, inviteId string) (*model.
 	}
 
 	// 事前に新規ユーザーをチームに参加させておく
-	if err := a.JoinUserToTeam(team, ruser, ""); err != nil {
+	if err := a.JoinUserToTeam(team, ruser, false); err != nil {
 		return nil, err
 	}
 

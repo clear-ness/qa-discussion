@@ -31,6 +31,7 @@ func createCollection(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.SetInvalidParam("collection")
 		return
 	}
+	// TODO: SanitizeInput
 
 	if !c.App.SessionHasPermissionToTeam(c.App.Session, collection.TeamId, model.PERMISSION_CREATE_COLLECTION) {
 		c.SetPermissionError(model.PERMISSION_CREATE_COLLECTION)

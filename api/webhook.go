@@ -37,6 +37,7 @@ func createHook(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.Err = err
 		return
 	}
+	// TODO: SanitizeInput
 
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(rhook.ToJson()))
@@ -218,15 +219,12 @@ func getHooksHistory(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.SetInvalidParam("team_id")
 	}
 
-	var hooks []*model.Webhook
-	var err *model.AppError
-
 	if !c.App.SessionHasPermissionToTeam(c.App.Session, teamId, model.PERMISSION_MANAGE_WEBHOOKS) {
 		c.SetPermissionError(model.PERMISSION_MANAGE_WEBHOOKS)
 		return
 	}
 
-	histories, err = c.App.GetWebhooksHistoriesPage(teamId, c.Params.Page, c.Params.PerPage)
+	histories, err := c.App.GetWebhooksHistoriesPage(teamId, c.Params.Page, c.Params.PerPage)
 	if err != nil {
 		c.Err = err
 		return

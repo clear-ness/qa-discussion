@@ -21,6 +21,8 @@ func (a *App) GetSession(token string) (*model.Session, *model.AppError) {
 	var session *model.Session
 	var err *model.AppError
 
+	// TODO: まずセッションL1キャッシュから取得を試みる
+
 	if session, err = a.Srv.Store.Session().Get(token); err == nil {
 		if session != nil {
 			if session.Token != token {
@@ -59,6 +61,8 @@ func (a *App) RevokeSession(session *model.Session) *model.AppError {
 		}
 	}
 
+	a.ClearSessionCacheForUser(session.UserId)
+
 	return nil
 }
 
@@ -78,5 +82,40 @@ func (a *App) RevokeAllSessions(userId string) *model.AppError {
 		}
 	}
 
+	a.ClearSessionCacheForUser(userId)
+
 	return nil
+}
+
+// 自サーバーのL1キャッシュ(user session)を削除
+func (a *App) ClearLocalSessionCacheForUser(userId string) {
+	if keys, err := a.Srv.sessionCache.Keys(); err == nil {
+		var session *model.Session
+		for _, key := range keys {
+			if err := a.Srv.sessionCache.Get(key, &session); err == nil {
+				if session.UserId == userId {
+					a.Srv.sessionCache.Remove(key)
+				}
+			}
+		}
+	}
+
+	// 関連するwebConnが持つセッション情報も削除
+	a.InvalidateWebConnSessionCacheForUser(userId)
+}
+
+// 自サーバーのL1キャッシュ(user session)を削除し、
+// (自サーバー以外の)クラスタ全体にも周知する。
+func (a *App) ClearSessionCacheForUser(userId string) {
+	a.ClearLocalSessionCacheForUser(userId)
+
+	if a.Srv.Cluster != nil {
+		cm := &model.ClusterMessage{
+			OmitCluster: a.Srv.clusterId,
+			Event:       model.CLUSTER_EVENT_CLEAR_SESSION_CACHE_FOR_USER,
+			Data:        userId,
+		}
+
+		a.Srv.Cluster.SendClusterMessage(cm)
+	}
 }

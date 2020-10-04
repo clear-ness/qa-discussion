@@ -27,7 +27,7 @@ func (o *GroupMember) IsValid() *AppError {
 		return NewAppError("GroupMember.IsValid", "model.group_member.is_valid.user_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if o.Type != GROUP_MEMBER_TYPE_NORMAL && o.Type != GROUP_MEMBER_TYPE_ADMIN {
+	if len(o.Type) > 0 && o.Type != GROUP_MEMBER_TYPE_NORMAL && o.Type != GROUP_MEMBER_TYPE_ADMIN {
 		return NewAppError("GroupMember.IsValid", "model.group_member.is_valid.type.app_error", nil, "", http.StatusBadRequest)
 	}
 

@@ -22,6 +22,8 @@ func init() {
 	RootCmd.AddCommand(JobserverCmd)
 }
 
+// TODO: tag jobサーバーとES indexing jobサーバーを外部に切り出して用意
+// → StackOverFlowはService Tierとしてジョブ専用で切り出している
 func jobserverCmdF(command *cobra.Command, args []string) error {
 	if len(args) < 1 || (args[0] != model.NOTIFICATION_INBOX_INTERVAL_THREE_HOUR && args[0] != model.NOTIFICATION_INBOX_INTERVAL_DAY && args[0] != model.NOTIFICATION_INBOX_INTERVAL_WEEK) {
 		return errors.New("need interval argument")

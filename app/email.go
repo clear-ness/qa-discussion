@@ -175,7 +175,8 @@ func SendInboxMessagesDigestEmail(email, siteURL string, messageCount int64, con
 	return nil
 }
 
-// 宛先毎にTOKEN_TYPE_TEAM_INVITATIONでTokenをDBに保存し、メアド宛にsignup_user_completeを付与して送信する
+// 宛先毎にTOKEN_TYPE_TEAM_INVITATIONでTokenをDBに保存し、メアド宛にsignup_user_completeを付与して送信する。
+// つまりサインアップさせると同時にチーム参加API(addUserToTeamFromInvite)を叩かせる？
 // TODO: メール送信(injection注意)
 func (a *App) SendInviteEmails(team *model.Team, senderName string, senderUserId string, invites []string, siteURL string) {
 	for _, invite := range invites {

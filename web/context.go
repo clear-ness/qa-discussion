@@ -10,6 +10,8 @@ import (
 	"github.com/clear-ness/qa-discussion/utils"
 )
 
+// ServeHTTPメソッドの最初でContextインスタンスを生成し、その1リクエスト を通じて使い回される。
+// そのための抽象。
 type Context struct {
 	App           *app.App
 	Log           *mlog.Logger

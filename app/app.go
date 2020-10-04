@@ -1,14 +1,20 @@
 package app
 
 import (
+	"github.com/clear-ness/qa-discussion/clusters"
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
+	"github.com/clear-ness/qa-discussion/services/httpservice"
 )
 
 type App struct {
 	Srv *Server
 
 	Log *mlog.Logger
+
+	HttpService httpservice.HTTPService
+
+	Cluster clusters.ClusterInterface
 
 	Session   model.Session
 	RequestId string

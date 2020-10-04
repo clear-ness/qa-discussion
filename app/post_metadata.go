@@ -17,6 +17,8 @@ func (a *App) SetPostMetadata(posts model.Posts, options model.SetPostMetadataOp
 	}
 
 	userMap := map[string]*model.User{}
+	// TODO: チームに紐づく投稿の場合は、ユーザー情報はteamに関するものにする
+	// (teamMember.points, teamMember.typeなど)
 	if options.SetUser {
 		var userIds []string
 		for key := range userIdsMaps {

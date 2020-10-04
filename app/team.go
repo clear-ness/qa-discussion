@@ -43,7 +43,7 @@ func (a *App) CreateTeamWithUser(team *model.Team, userId string) (*model.Team, 
 		return nil, err
 	}
 
-	if err = a.JoinUserToTeam(rteam, user, ""); err != nil {
+	if err = a.JoinUserToTeam(rteam, user, true); err != nil {
 		return nil, err
 	}
 
@@ -85,24 +85,29 @@ func (a *App) getAllowedDomains(user *model.User, team *model.Team) []string {
 	return []string{team.AllowedDomains}
 }
 
-// Returns three values:
-// 1. a pointer to the team member, if successful
-// 2. a boolean: true if the user has a non-deleted team member for that team already, otherwise false.
-// 3. a pointer to an AppError if something went wrong.
-func (a *App) joinUserToTeam(team *model.Team, user *model.User) (*model.TeamMember, bool, *model.AppError) {
+func (a *App) joinUserToTeam(team *model.Team, user *model.User, isAdmin bool) (*model.TeamMember, bool, *model.AppError) {
+	memberType := model.TEAM_MEMBER_TYPE_NORMAL
+	if isAdmin {
+		memberType = model.TEAM_MEMBER_TYPE_ADMIN
+	}
+
 	tm := &model.TeamMember{
-		TeamId: team.Id,
-		UserId: user.Id,
-		Type:   model.TEAM_MEMBER_TYPE_NORMAL,
+		TeamId:   team.Id,
+		UserId:   user.Id,
+		Type:     memberType,
+		Points:   0,
+		DeleteAt: 0,
 	}
 
 	rtm, err := a.Srv.Store.Team().GetMember(team.Id, user.Id)
 	if err != nil {
 		var tmr *model.TeamMember
+		// 新規作成を試みる
 		tmr, err = a.Srv.Store.Team().SaveMember(tm, *a.Config().TeamSettings.MaxUsersPerTeam)
 		if err != nil {
 			return nil, false, err
 		}
+
 		return tmr, false, nil
 	}
 
@@ -123,6 +128,7 @@ func (a *App) joinUserToTeam(team *model.Team, user *model.User) (*model.TeamMem
 
 	// 以前の削除前の状態を考慮し、未削除状態に更新する
 	tm.Points = rtm.Points
+
 	member, err := a.Srv.Store.Team().UpdateMember(tm)
 	if err != nil {
 		return nil, false, err
@@ -131,16 +137,24 @@ func (a *App) joinUserToTeam(team *model.Team, user *model.User) (*model.TeamMem
 	return member, false, nil
 }
 
-func (a *App) JoinUserToTeam(team *model.Team, user *model.User, userRequestorId string) *model.AppError {
+func (a *App) JoinUserToTeam(team *model.Team, user *model.User, isAdmin bool) *model.AppError {
 	if !a.isTeamEmailAllowed(user, team) {
 		return model.NewAppError("JoinUserToTeam", "api.team.join_user_to_team.allowed_domains.app_error", nil, "", http.StatusBadRequest)
 	}
-	_, alreadyAdded, err := a.joinUserToTeam(team, user)
+
+	tm, alreadyAdded, err := a.joinUserToTeam(team, user, isAdmin)
 	if err != nil {
 		return err
 	}
+
 	if alreadyAdded {
 		return nil
+	}
+
+	// 参加に成功した場合
+	if tm != nil {
+		// L1キャッシュ(user session)にはteam membersも含まれるため
+		a.ClearSessionCacheForUser(user.Id)
 	}
 
 	return nil
@@ -175,6 +189,10 @@ func (a *App) SanitizeTeams(session model.Session, teams []*model.Team) []*model
 
 func (a *App) GetTeam(teamId string) (*model.Team, *model.AppError) {
 	team, err := a.Srv.Store.Team().Get(teamId)
+	if err != nil {
+		return nil, err
+	}
+
 	team.TeamImageLink = team.GetTeamImageLink(&a.Config().FileSettings)
 	return team, err
 }
@@ -386,7 +404,7 @@ func (a *App) AddUserToTeamByToken(userId string, tokenId string) (*model.Team, 
 	}
 	user := result.Data.(*model.User)
 
-	if err := a.JoinUserToTeam(team, user, ""); err != nil {
+	if err := a.JoinUserToTeam(team, user, false); err != nil {
 		return nil, err
 	}
 
@@ -424,7 +442,7 @@ func (a *App) AddUserToTeamByInviteId(inviteId string, userId string) (*model.Te
 	}
 	user := result.Data.(*model.User)
 
-	if err := a.JoinUserToTeam(team, user, ""); err != nil {
+	if err := a.JoinUserToTeam(team, user, false); err != nil {
 		return nil, err
 	}
 
@@ -489,21 +507,21 @@ func (a *App) LeaveTeam(team *model.Team, user *model.User, requestorId string) 
 
 	// team adminはいきなりはteamから削除不能。一旦normalに戻す必要あり。
 	if teamMember.Type == model.TEAM_MEMBER_TYPE_ADMIN {
-		return model.NewAppError("LeaveTeam", "api.team.remove_user_from_team.admin.app_error", nil, err.Error(), http.StatusBadRequest)
+		return model.NewAppError("LeaveTeam", "api.team.remove_user_from_team.admin.app_error", nil, "", http.StatusBadRequest)
 	}
 
 	// そのteamに関連する、現在所属しているgroupから離脱させる(物理削除)
-	var groupList *model.GroupList
-	if groupList, err = a.Srv.Store.Group().GetGroups(team.Id, user.Id, true); err != nil {
-		if err.Id == "store.sql_group.get_groups.not_found.app_error" {
-			groupList = &model.GroupList{}
+	var groupList *model.UserGroupList
+	if groupList, err = a.Srv.Store.UserGroup().GetGroups(team.Id, user.Id, true); err != nil {
+		if err.Id == store.MISSING_GROUPS_ERROR {
+			groupList = &model.UserGroupList{}
 		} else {
 			return err
 		}
 	}
 
 	for _, group := range *groupList {
-		if err = a.Srv.Store.Group().RemoveMember(group.Id, user.Id); err != nil {
+		if err = a.Srv.Store.UserGroup().RemoveMember(group.Id, user.Id); err != nil {
 			return err
 		}
 	}
@@ -524,6 +542,9 @@ func (a *App) RemoveTeamMemberFromTeam(teamMember *model.TeamMember, requestorId
 	if _, err := a.Srv.Store.Team().UpdateMember(teamMember); err != nil {
 		return err
 	}
+
+	// L1キャッシュ(user session)にはteam membersも含まれるため
+	a.ClearSessionCacheForUser(teamMember.UserId)
 
 	return nil
 }
@@ -632,6 +653,9 @@ func (a *App) UpdateTeamMemberType(teamId string, userId string, newType string)
 	if err != nil {
 		return nil, err
 	}
+
+	// L1キャッシュ(user session)にはteam membersも含まれるため
+	a.ClearSessionCacheForUser(userId)
 
 	return member, nil
 }

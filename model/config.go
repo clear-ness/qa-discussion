@@ -20,19 +20,21 @@ const (
 	SERVICE_SETTINGS_DEFAULT_LISTEN_AND_ADDRESS = ":8080"
 	SERVICE_SETTINGS_DEFAULT_ALLOW_CORS_FROM    = ""
 
-	SERVICE_SETTINGS_DEFAULT_READ_TIMEOUT       = 300
-	SERVICE_SETTINGS_DEFAULT_WRITE_TIMEOUT      = 300
-	SERVICE_SETTINGS_DEFAULT_MAX_LOGIN_ATTEMPTS = 10
-	SERVICE_SETTINGS_DEFAULT_TLS_CERT_FILE      = ""
-	SERVICE_SETTINGS_DEFAULT_TLS_KEY_FILE       = ""
+	SERVICE_SETTINGS_DEFAULT_READ_TIMEOUT             = 300
+	SERVICE_SETTINGS_DEFAULT_WRITE_TIMEOUT            = 300
+	SERVICE_SETTINGS_DEFAULT_MAX_LOGIN_ATTEMPTS       = 10
+	SERVICE_SETTINGS_DEFAULT_TLS_CERT_FILE            = ""
+	SERVICE_SETTINGS_DEFAULT_TLS_KEY_FILE             = ""
+	SERVICE_SETTINGS_DEFAULT_USER_STATUS_AWAY_TIMEOUT = 300
 
 	PASSWORD_MAXIMUM_LENGTH = 64
 	PASSWORD_MINIMUM_LENGTH = 8
 
 	TEAM_SETTINGS_DEFAULT_MAX_USERS_PER_TEAM = 50
 
-	CACHE_SETTINGS_DEFAULT_ENDPOINT  = "http://localhost:6379"
-	SEARCH_SETTINGS_DEFAULT_ENDPOINT = "http://localhost:9200"
+	CACHE_SETTINGS_DEFAULT_ENDPOINT   = "http://localhost:6379"
+	CLUSTER_SETTINGS_DEFAULT_ENDPOINT = "127.0.0.1:6379"
+	SEARCH_SETTINGS_DEFAULT_ENDPOINT  = "http://localhost:9200"
 )
 
 type ServiceSettings struct {
@@ -55,6 +57,7 @@ type ServiceSettings struct {
 	SessionLengthOAuthInDays            *int `restricted:"true"`
 	TrustedProxyIPHeader                []string
 	AllowedUntrustedInternalConnections *string `restricted:"true"`
+	UserStatusAwayTimeout               *int64
 
 	AllowCorsFrom        *string
 	CorsExposedHeaders   *string
@@ -143,6 +146,10 @@ func (s *ServiceSettings) SetDefaults() {
 
 	if s.AllowedUntrustedInternalConnections == nil {
 		s.AllowedUntrustedInternalConnections = NewString("")
+	}
+
+	if s.UserStatusAwayTimeout == nil {
+		s.UserStatusAwayTimeout = NewInt64(SERVICE_SETTINGS_DEFAULT_USER_STATUS_AWAY_TIMEOUT)
 	}
 
 	if s.AllowCorsFrom == nil {
@@ -560,6 +567,20 @@ func (s *EmailBatchJobSettings) isValid() *AppError {
 	return nil
 }
 
+type ClusterSettings struct {
+	ClusterEndpoint *string
+}
+
+func (s *ClusterSettings) SetDefaults() {
+	if s.ClusterEndpoint == nil {
+		s.ClusterEndpoint = NewString(CLUSTER_SETTINGS_DEFAULT_ENDPOINT)
+	}
+}
+
+func (s *ClusterSettings) isValid() *AppError {
+	return nil
+}
+
 type Config struct {
 	ServiceSettings       ServiceSettings
 	SqlSettings           SqlSettings
@@ -571,6 +592,7 @@ type Config struct {
 	RateLimitSettings     RateLimitSettings
 	EmailBatchJobSettings EmailBatchJobSettings
 	EmailSettings         EmailSettings
+	ClusterSettings       ClusterSettings
 }
 
 func (o *Config) ToJson() string {
@@ -597,6 +619,7 @@ func (o *Config) SetDefaults() {
 	o.RateLimitSettings.SetDefaults()
 	o.EmailBatchJobSettings.SetDefaults()
 	o.EmailSettings.SetDefaults()
+	o.ClusterSettings.SetDefaults()
 }
 
 func (o *Config) IsValid() *AppError {
@@ -637,6 +660,10 @@ func (o *Config) IsValid() *AppError {
 	}
 
 	if err := o.EmailSettings.isValid(); err != nil {
+		return err
+	}
+
+	if err := o.ClusterSettings.isValid(); err != nil {
 		return err
 	}
 

@@ -475,7 +475,7 @@ func filterBlacklist(r rune) rune {
 	return r
 }
 
-func IsValidGroupIdentifier(s string) bool {
+func IsValidUserGroupIdentifier(s string) bool {
 	if !IsValidAlphaNumHyphenUnderscore(s) {
 		return false
 	}

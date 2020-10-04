@@ -227,28 +227,6 @@ func (s *SqlPostStore) saveAnswer(transaction *gorp.Transaction, post *model.Pos
 		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.updating.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
-	max := len(post.Content)
-	if max > model.INBOX_MESSAGE_CONTENT_MAX_LENGTH {
-		max = model.INBOX_MESSAGE_CONTENT_MAX_LENGTH
-	}
-	content := post.Content[0:max]
-
-	message := &model.InboxMessage{
-		Id:         model.NewId(),
-		Type:       model.INBOX_MESSAGE_TYPE_ANSWER,
-		Content:    content,
-		UserId:     parent.UserId,
-		SenderId:   post.UserId,
-		QuestionId: parent.Id,
-		Title:      parent.Title,
-		AnswerId:   post.Id,
-		CreateAt:   curTime,
-	}
-
-	if err := transaction.Insert(message); err != nil {
-		return model.NewAppError("SqlPostStore.saveAnswer", "store.sql_post.save_answer.inbox_message.app_error", nil, "id="+post.Id+", "+err.Error(), http.StatusInternalServerError)
-	}
-
 	// prevent self point gain
 	if post.UserId == parent.UserId {
 		return nil
@@ -772,7 +750,7 @@ func (s *SqlPostStore) searchPosts(options *model.SearchPostsOptions, countQuery
 			sq.Expr(`TeamId = ?`, options.TeamId),
 		})
 	} else {
-		query = query.Where("TeamId IS NULL")
+		query = query.Where("TeamId = ''")
 	}
 
 	if len(options.Ids) > 0 {

@@ -9,7 +9,7 @@ import (
 	"github.com/clear-ness/qa-discussion/store"
 )
 
-func (a *App) CreateGroupWithUser(group *model.Group, userId string) (*model.Group, *model.AppError) {
+func (a *App) CreateGroupWithUser(group *model.UserGroup, userId string) (*model.UserGroup, *model.AppError) {
 	if len(group.TeamId) == 0 {
 		return nil, model.NewAppError("CreateGroupWithUser", "app.group.create_group.no_team_id.app_error", nil, "", http.StatusBadRequest)
 	}
@@ -34,18 +34,22 @@ func (a *App) CreateGroupWithUser(group *model.Group, userId string) (*model.Gro
 }
 
 func (a *App) GetNumberOfGroupsOnTeam(teamId string) (int, *model.AppError) {
-	list, err := a.Srv.Store.Group().GetTeamGroups(teamId)
+	list, err := a.Srv.Store.UserGroup().GetTeamGroups(teamId)
 	if err != nil {
+		if err.Id == store.MISSING_GROUPS_ERROR {
+			return 0, nil
+		}
+
 		return 0, err
 	}
 
 	return len(*list), nil
 }
 
-func (a *App) CreateGroup(group *model.Group, addMember bool) (*model.Group, *model.AppError) {
+func (a *App) CreateGroup(group *model.UserGroup, addMember bool) (*model.UserGroup, *model.AppError) {
 	group.Name = strings.TrimSpace(group.Name)
 
-	sg, err := a.Srv.Store.Group().Save(group, *a.Config().TeamSettings.MaxGroupsPerTeam)
+	sg, err := a.Srv.Store.UserGroup().Save(group, *a.Config().TeamSettings.MaxGroupsPerTeam)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +66,7 @@ func (a *App) CreateGroup(group *model.Group, addMember bool) (*model.Group, *mo
 			UserId:  user.Id,
 			Type:    model.GROUP_MEMBER_TYPE_ADMIN,
 		}
-		if _, err := a.Srv.Store.Group().SaveMember(gm); err != nil {
+		if _, err := a.Srv.Store.UserGroup().SaveMember(gm); err != nil {
 			return nil, err
 		}
 
@@ -75,25 +79,25 @@ func (a *App) CreateGroup(group *model.Group, addMember bool) (*model.Group, *mo
 	return sg, nil
 }
 
-func (a *App) GetGroupsForTeam(teamId string, groupType string, offset int, limit int) (*model.GroupList, *model.AppError) {
-	return a.Srv.Store.Group().GetGroupsForTeam(teamId, groupType, offset, limit)
+func (a *App) GetGroupsForTeam(teamId string, groupType string, offset int, limit int) (*model.UserGroupList, *model.AppError) {
+	return a.Srv.Store.UserGroup().GetGroupsForTeam(teamId, groupType, offset, limit)
 }
 
-func (a *App) AutocompleteGroups(teamId string, term string, groupType string) (*model.GroupList, *model.AppError) {
+func (a *App) AutocompleteGroups(teamId string, term string, groupType string) (*model.UserGroupList, *model.AppError) {
 	term = strings.TrimSpace(term)
-	return a.Srv.Store.Group().AutocompleteInTeam(teamId, term, groupType, false)
+	return a.Srv.Store.UserGroup().AutocompleteInTeam(teamId, term, groupType, false)
 }
 
-func (a *App) GetGroupsForUser(teamId string, userId string, includeDeleted bool) (*model.GroupList, *model.AppError) {
-	return a.Srv.Store.Group().GetGroups(teamId, userId, includeDeleted)
+func (a *App) GetGroupsForUser(teamId string, userId string, includeDeleted bool) (*model.UserGroupList, *model.AppError) {
+	return a.Srv.Store.UserGroup().GetGroups(teamId, userId, includeDeleted)
 }
 
-func (a *App) GetGroup(groupId string) (*model.Group, *model.AppError) {
-	return a.Srv.Store.Group().Get(groupId)
+func (a *App) GetGroup(groupId string) (*model.UserGroup, *model.AppError) {
+	return a.Srv.Store.UserGroup().Get(groupId)
 }
 
-func (a *App) UpdateGroup(group *model.Group) (*model.Group, *model.AppError) {
-	rgroup, err := a.Srv.Store.Group().Update(group)
+func (a *App) UpdateGroup(group *model.UserGroup) (*model.UserGroup, *model.AppError) {
+	rgroup, err := a.Srv.Store.UserGroup().Update(group)
 	if err != nil {
 		return nil, err
 	}
@@ -101,14 +105,14 @@ func (a *App) UpdateGroup(group *model.Group) (*model.Group, *model.AppError) {
 	return rgroup, nil
 }
 
-func (a *App) DeleteGroup(group *model.Group) *model.AppError {
+func (a *App) DeleteGroup(group *model.UserGroup) *model.AppError {
 	if group.DeleteAt > 0 {
 		err := model.NewAppError("deleteGroup", "api.group.delete_group.deleted.app_error", nil, "", http.StatusBadRequest)
 		return err
 	}
 
 	deleteAt := model.GetMillis()
-	if err := a.Srv.Store.Group().Delete(group.Id, deleteAt); err != nil {
+	if err := a.Srv.Store.UserGroup().Delete(group.Id, deleteAt); err != nil {
 		return model.NewAppError("DeleteGroup", "app.group.delete.app_error", nil, err.Error(), http.StatusInternalServerError)
 	}
 
@@ -116,15 +120,15 @@ func (a *App) DeleteGroup(group *model.Group) *model.AppError {
 }
 
 func (a *App) GetGroupMembersPage(groupId string, memberType string, page, perPage int) (*model.GroupMembers, *model.AppError) {
-	return a.Srv.Store.Group().GetMembers(groupId, memberType, page*perPage, perPage)
+	return a.Srv.Store.UserGroup().GetMembers(groupId, memberType, page*perPage, perPage)
 }
 
 func (a *App) GetGroupMember(groupId string, userId string) (*model.GroupMember, *model.AppError) {
-	return a.Srv.Store.Group().GetMember(groupId, userId)
+	return a.Srv.Store.UserGroup().GetMember(groupId, userId)
 }
 
-func (a *App) AddGroupMember(userId string, group *model.Group) (*model.GroupMember, *model.AppError) {
-	if member, err := a.Srv.Store.Group().GetMember(group.Id, userId); err != nil {
+func (a *App) AddGroupMember(userId string, group *model.UserGroup) (*model.GroupMember, *model.AppError) {
+	if member, err := a.Srv.Store.UserGroup().GetMember(group.Id, userId); err != nil {
 		if err.Id != store.MISSING_GROUP_MEMBER_ERROR {
 			return nil, err
 		}
@@ -146,8 +150,8 @@ func (a *App) AddGroupMember(userId string, group *model.Group) (*model.GroupMem
 	return gm, nil
 }
 
-func (a *App) addUserToGroup(user *model.User, group *model.Group, teamMember *model.TeamMember) (*model.GroupMember, *model.AppError) {
-	groupMember, err := a.Srv.Store.Group().GetMember(group.Id, user.Id)
+func (a *App) addUserToGroup(user *model.User, group *model.UserGroup, teamMember *model.TeamMember) (*model.GroupMember, *model.AppError) {
+	groupMember, err := a.Srv.Store.UserGroup().GetMember(group.Id, user.Id)
 	if err != nil {
 		if err.Id != store.MISSING_GROUP_MEMBER_ERROR {
 			return nil, err
@@ -164,7 +168,7 @@ func (a *App) addUserToGroup(user *model.User, group *model.Group, teamMember *m
 		Type:    model.GROUP_MEMBER_TYPE_NORMAL,
 	}
 
-	newMember, err = a.Srv.Store.Group().SaveMember(newMember)
+	newMember, err = a.Srv.Store.UserGroup().SaveMember(newMember)
 	if err != nil {
 		mlog.Error("Failed to add member", mlog.String("user_id", user.Id), mlog.String("group_id", group.Id), mlog.Err(err))
 		return nil, model.NewAppError("AddUserToGroup", "api.group.add_user.to.group.failed.app_error", nil, "", http.StatusInternalServerError)
@@ -178,7 +182,7 @@ func (a *App) addUserToGroup(user *model.User, group *model.Group, teamMember *m
 	return newMember, nil
 }
 
-func (a *App) AddUserToGroup(user *model.User, group *model.Group) (*model.GroupMember, *model.AppError) {
+func (a *App) AddUserToGroup(user *model.User, group *model.UserGroup) (*model.GroupMember, *model.AppError) {
 	teamMember, err := a.Srv.Store.Team().GetMember(group.TeamId, user.Id)
 	// ユーザーをグループに追加する場合、関連するteamにそのユーザーが所蔵していることが前提。
 	if err != nil {
@@ -214,7 +218,7 @@ func (a *App) UpdateGroupMemberType(groupId string, userId string, newType strin
 	}
 
 	member.Type = newType
-	member, err = a.Srv.Store.Group().UpdateMember(member)
+	member, err = a.Srv.Store.UserGroup().UpdateMember(member)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +226,7 @@ func (a *App) UpdateGroupMemberType(groupId string, userId string, newType strin
 	return member, nil
 }
 
-func (a *App) removeUserFromGroup(userIdToRemove string, removerUserId string, group *model.Group) *model.AppError {
+func (a *App) removeUserFromGroup(userIdToRemove string, removerUserId string, group *model.UserGroup) *model.AppError {
 	groupMember, err := a.GetGroupMember(group.Id, userIdToRemove)
 	if err != nil && err.Id == store.MISSING_GROUP_MEMBER_ERROR {
 		return model.NewAppError("removeUserFromGroup", "app.group.remove_user_from_group.missing.internal_error", nil, err.Error(), http.StatusBadRequest)
@@ -232,10 +236,10 @@ func (a *App) removeUserFromGroup(userIdToRemove string, removerUserId string, g
 
 	// group adminはいきなりはgroupから削除不能。一旦normalに戻す必要あり。
 	if groupMember.Type == model.GROUP_MEMBER_TYPE_ADMIN {
-		return model.NewAppError("removeUserFromGroup", "api.group.remove_user_from_group.admin.app_error", nil, err.Error(), http.StatusBadRequest)
+		return model.NewAppError("removeUserFromGroup", "api.group.remove_user_from_group.admin.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if err := a.Srv.Store.Group().RemoveMember(group.Id, userIdToRemove); err != nil {
+	if err := a.Srv.Store.UserGroup().RemoveMember(group.Id, userIdToRemove); err != nil {
 		return err
 	}
 
@@ -246,7 +250,7 @@ func (a *App) removeUserFromGroup(userIdToRemove string, removerUserId string, g
 	return nil
 }
 
-func (a *App) RemoveUserFromGroup(userIdToRemove string, removerUserId string, group *model.Group) *model.AppError {
+func (a *App) RemoveUserFromGroup(userIdToRemove string, removerUserId string, group *model.UserGroup) *model.AppError {
 	var err *model.AppError
 	if err = a.removeUserFromGroup(userIdToRemove, removerUserId, group); err != nil {
 		return err

@@ -39,12 +39,16 @@ func (a *App) CheckPasswordAndAllCriteria(user *model.User, password string) *mo
 			return passErr
 		}
 
+		a.ClearSessionCacheForUser(user.Id)
+
 		return err
 	}
 
 	if passErr := a.Srv.Store.User().UpdateFailedPasswordAttempts(user.Id, 0); passErr != nil {
 		return passErr
 	}
+
+	a.ClearSessionCacheForUser(user.Id)
 
 	if err := a.CheckUserPostflightAuthenticationCriteria(user); err != nil {
 		return err
@@ -97,7 +101,6 @@ func (a *App) checkUserPassword(user *model.User, password string) *model.AppErr
 	return nil
 }
 
-// used for places we check the users password when they are already logged in
 func (a *App) DoubleCheckPassword(user *model.User, password string) *model.AppError {
 	if err := checkUserLoginAttempts(user, *a.Config().ServiceSettings.MaximumLoginAttempts); err != nil {
 		return err
@@ -108,12 +111,16 @@ func (a *App) DoubleCheckPassword(user *model.User, password string) *model.AppE
 			return passErr
 		}
 
+		a.ClearSessionCacheForUser(user.Id)
+
 		return err
 	}
 
 	if passErr := a.Srv.Store.User().UpdateFailedPasswordAttempts(user.Id, 0); passErr != nil {
 		return passErr
 	}
+
+	a.ClearSessionCacheForUser(user.Id)
 
 	return nil
 }

@@ -7,7 +7,7 @@ import (
 	"github.com/clear-ness/qa-discussion/store"
 )
 
-func (api *API) InitGroup() {
+func (api *API) InitUserGroup() {
 	api.BaseRoutes.Groups.Handle("", api.ApiSessionRequired(createGroup)).Methods("POST")
 
 	api.BaseRoutes.GroupsForTeam.Handle("", api.ApiSessionRequired(getGroupsForTeam)).Methods("GET")
@@ -20,7 +20,7 @@ func (api *API) InitGroup() {
 	api.BaseRoutes.Group.Handle("", api.ApiSessionRequired(deleteGroup)).Methods("DELETE")
 
 	// Add a user to a group by creating a group member object.
-	api.BaseRoutes.GroupMembers.Handle("", api.ApiSessionRequired(addGroupMember)).Methods("POST")
+	api.BaseRoutes.GroupMember.Handle("", api.ApiSessionRequired(addGroupMember)).Methods("POST")
 
 	// 特定グループに所属する特定メンバーを取得
 	api.BaseRoutes.GroupMember.Handle("", api.ApiSessionRequired(getGroupMember)).Methods("GET")
@@ -37,11 +37,12 @@ func (api *API) InitGroup() {
 }
 
 func createGroup(c *Context, w http.ResponseWriter, r *http.Request) {
-	group := model.GroupFromJson(r.Body)
+	group := model.UserGroupFromJson(r.Body)
 	if group == nil {
 		c.SetInvalidParam("group")
 		return
 	}
+	// TODO: SanitizeInput
 
 	team, err := c.App.GetTeam(group.TeamId)
 	if err != nil {
@@ -56,7 +57,7 @@ func createGroup(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	if team.Type == model.TEAM_TYPE_PRIVATE && group.Type != model.GROUP_TYPE_PRIVATE {
 		// private teamかつpublic groupは許可しない、弾く。
-		c.SetInvalidParam("group_type")
+		c.SetInvalidParam("type")
 		return
 	}
 
@@ -82,7 +83,7 @@ func getGroupsForTeam(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	groups := &model.GroupList{}
+	groups := &model.UserGroupList{}
 	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_LIST_TEAM_GROUPS) {
 		if team.Type == model.TEAM_TYPE_PUBLIC {
 			groups, err = c.App.GetGroupsForTeam(c.Params.TeamId, model.GROUP_TYPE_PUBLIC, c.Params.Page*c.Params.PerPage, c.Params.PerPage)
@@ -119,7 +120,7 @@ func autocompleteGroupsForTeam(c *Context, w http.ResponseWriter, r *http.Reques
 
 	name := r.URL.Query().Get("name")
 
-	groups := &model.GroupList{}
+	groups := &model.UserGroupList{}
 	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_LIST_TEAM_GROUPS) {
 		if team.Type == model.TEAM_TYPE_PUBLIC {
 			groups, err = c.App.AutocompleteGroups(c.Params.TeamId, name, model.GROUP_TYPE_PUBLIC)
@@ -200,7 +201,7 @@ func updateGroup(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group := model.GroupFromJson(r.Body)
+	group := model.UserGroupFromJson(r.Body)
 	if group == nil {
 		c.SetInvalidParam("group")
 		return

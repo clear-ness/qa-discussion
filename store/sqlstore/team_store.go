@@ -24,7 +24,7 @@ type SqlTeamStore struct {
 }
 
 func teamMemberSliceColumns() []string {
-	return []string{"TeamId", "UserId", "Type", "DeleteAt"}
+	return []string{"TeamId", "UserId", "Type", "Points", "DeleteAt"}
 }
 
 func teamMemberToSlice(member *model.TeamMember) []interface{} {
@@ -32,6 +32,7 @@ func teamMemberToSlice(member *model.TeamMember) []interface{} {
 	resultSlice = append(resultSlice, member.TeamId)
 	resultSlice = append(resultSlice, member.UserId)
 	resultSlice = append(resultSlice, member.Type)
+	resultSlice = append(resultSlice, member.Points)
 	resultSlice = append(resultSlice, member.DeleteAt)
 
 	return resultSlice
@@ -432,8 +433,8 @@ func (s SqlTeamStore) UpdateMultipleMembers(members []*model.TeamMember) ([]*mod
 			return nil, model.NewAppError("SqlTeamStore.UpdateMember", "store.sql_team.update_member.app_error", nil, "team_id="+member.TeamId+", "+"user_id="+member.UserId+", "+err.Error(), http.StatusInternalServerError)
 		}
 
-		var member *model.TeamMember
-		if err := transaction.SelectOne(&member, "SELECT * FROM TeamMembers WHERE TeamMembers.TeamId = :TeamId AND TeamMembers.UserId = :UserId", map[string]interface{}{"TeamId": member.TeamId, "UserId": member.UserId}); err != nil {
+		res := model.TeamMember{}
+		if err := transaction.SelectOne(&res, "SELECT * FROM TeamMembers WHERE TeamMembers.TeamId = :TeamId AND TeamMembers.UserId = :UserId", map[string]interface{}{"TeamId": member.TeamId, "UserId": member.UserId}); err != nil {
 			if err == sql.ErrNoRows {
 				return nil, model.NewAppError("SqlTeamStore.GetMember", store.MISSING_TEAM_MEMBER_ERROR, nil, "team_id="+member.TeamId+"user_id="+member.UserId+","+err.Error(), http.StatusNotFound)
 			}
@@ -441,7 +442,7 @@ func (s SqlTeamStore) UpdateMultipleMembers(members []*model.TeamMember) ([]*mod
 			return nil, model.NewAppError("SqlTeamStore.GetMember", "store.sql_team.get_member.app_error", nil, "team_id="+member.TeamId+"user_id="+member.UserId+","+err.Error(), http.StatusInternalServerError)
 		}
 
-		updatedMembers = append(updatedMembers, member)
+		updatedMembers = append(updatedMembers, &res)
 	}
 
 	if err := transaction.Commit(); err != nil {

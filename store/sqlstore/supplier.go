@@ -60,7 +60,7 @@ const (
 type SqlSupplierStores struct {
 	team                store.TeamStore
 	teamMemberHistory   store.TeamMemberHistoryStore
-	group               store.GroupStore
+	userGroup           store.UserGroupStore
 	groupMemberHistory  store.GroupMemberHistoryStore
 	collection          store.CollectionStore
 	user                store.UserStore
@@ -79,6 +79,7 @@ type SqlSupplierStores struct {
 	webhooksHistory     store.WebhooksHistoryStore
 	audit               store.AuditStore
 	oauth               store.OAuthStore
+	status              store.StatusStore
 }
 
 type SqlSupplier struct {
@@ -100,7 +101,7 @@ func NewSqlSupplier(settings model.SqlSettings) *SqlSupplier {
 
 	supplier.stores.team = NewSqlTeamStore(supplier)
 	supplier.stores.teamMemberHistory = NewSqlTeamMemberHistoryStore(supplier)
-	supplier.stores.group = NewSqlGroupStore(supplier)
+	supplier.stores.userGroup = NewSqlUserGroupStore(supplier)
 	supplier.stores.groupMemberHistory = NewSqlGroupMemberHistoryStore(supplier)
 	supplier.stores.collection = NewSqlCollectionStore(supplier)
 	supplier.stores.user = NewSqlUserStore(supplier)
@@ -119,6 +120,7 @@ func NewSqlSupplier(settings model.SqlSettings) *SqlSupplier {
 	supplier.stores.postViewsHistory = NewSqlPostViewsHistoryStore(supplier)
 	supplier.stores.audit = NewSqlAuditStore(supplier)
 	supplier.stores.oauth = NewSqlOAuthStore(supplier)
+	supplier.stores.status = NewSqlStatusStore(supplier)
 
 	return supplier
 }
@@ -334,8 +336,8 @@ func (ss *SqlSupplier) TeamMemberHistory() store.TeamMemberHistoryStore {
 	return ss.stores.teamMemberHistory
 }
 
-func (ss *SqlSupplier) Group() store.GroupStore {
-	return ss.stores.group
+func (ss *SqlSupplier) UserGroup() store.UserGroupStore {
+	return ss.stores.userGroup
 }
 
 func (ss *SqlSupplier) GroupMemberHistory() store.GroupMemberHistoryStore {
@@ -408,6 +410,10 @@ func (ss *SqlSupplier) Audit() store.AuditStore {
 
 func (ss *SqlSupplier) OAuth() store.OAuthStore {
 	return ss.stores.oauth
+}
+
+func (ss *SqlSupplier) Status() store.StatusStore {
+	return ss.stores.status
 }
 
 type JSONSerializable interface {

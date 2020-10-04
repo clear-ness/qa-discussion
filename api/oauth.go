@@ -24,6 +24,7 @@ func createOAuthApp(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.SetInvalidParam("oauth_app")
 		return
 	}
+	// TODO: SanitizeInput
 
 	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_MANAGE_OAUTH) {
 		c.SetPermissionError(model.PERMISSION_MANAGE_OAUTH)

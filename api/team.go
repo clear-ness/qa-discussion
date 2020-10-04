@@ -13,7 +13,9 @@ import (
 func (api *API) InitTeam() {
 	api.BaseRoutes.Teams.Handle("", api.ApiSessionRequired(createTeam)).Methods("POST")
 	// (左サイドバーでチーム無選択状態で) public teamは検索出来る。
-	api.BaseRoutes.Teams.Handle("/autocomplete", api.ApiHandler(autocompletePublicTeams)).Methods("POST")
+	// TODO: なぜか通らない。
+	api.BaseRoutes.Teams.Handle("/autocomplete", api.ApiHandler(autocompletePublicTeams)).Methods("GET")
+
 	api.BaseRoutes.TeamsForUser.Handle("", api.ApiSessionRequired(getTeamsForUser)).Methods("GET")
 	//api.BaseRoutes.TeamsForUser.Handle("/unread", api.ApiSessionRequired(getTeamsUnreadForUser)).Methods("GET")
 
@@ -49,7 +51,20 @@ func (api *API) InitTeam() {
 	// Delete the team member object for a user, effectively removing them from a team.
 	api.BaseRoutes.TeamMember.Handle("", api.ApiSessionRequired(removeTeamMember)).Methods("DELETE")
 
-	api.BaseRoutes.Team.Handle("", api.ApiSessionRequired(getAnalytics)).Methods("GET")
+	api.BaseRoutes.Team.Handle("/analytics", api.ApiSessionRequired(getAnalytics)).Methods("GET")
+
+	// TODO: データアップロードをRESTで提供 (for team admins)
+	// User, UserGroup, Post, (Tag)
+	//
+	// (必要なら)関与するL1キャッシュをクラスタ全体から削除。
+	// (team毎に)回数制限、同時多発防止を別に設ける。
+	api.BaseRoutes.Team.Handle("/import", api.ApiSessionRequired(importTeam)).Methods("POST")
+
+	// TODO: データダウンロードをRESTで提供 (for team admins)
+	// https://slack.com/intl/en-se/help/articles/201658943-Export-your-workspace-data
+	// Slack同様、import完了すればメール送信→リンク経由でダウンロード、
+	// ファイルをブラウザに出力させる。
+	// (team毎に)回数制限を別に設ける。
 }
 
 func createTeam(c *Context, w http.ResponseWriter, r *http.Request) {
@@ -58,8 +73,8 @@ func createTeam(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.SetInvalidParam("team")
 		return
 	}
-	// チームのメアドはチームの作者のメアド
-	team.Email = strings.ToLower(team.Email)
+
+	team.SanitizeInput()
 
 	if !c.App.SessionHasPermissionTo(c.App.Session, model.PERMISSION_CREATE_TEAM) {
 		c.Err = model.NewAppError("createTeam", "api.team.is_team_creation_allowed.disabled.app_error", nil, "", http.StatusForbidden)
@@ -524,4 +539,73 @@ func getAnalytics(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write([]byte(rows.ToJson()))
+}
+
+// zip形式でjonl 1ファイルを読み取り、
+// 複数goルーチンで高速並列処理させる。
+func importTeam(c *Context, w http.ResponseWriter, r *http.Request) {
+	c.RequireTeamId()
+	if c.Err != nil {
+		return
+	}
+
+	if !c.App.SessionHasPermissionToTeam(c.App.Session, c.Params.TeamId, model.PERMISSION_IMPORT_TEAM) {
+		c.SetPermissionError(model.PERMISSION_IMPORT_TEAM)
+		return
+	}
+
+	if err := r.ParseMultipartForm(MAXIMUM_BULK_IMPORT_SIZE); err != nil {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.parse.app_error", nil, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	fileSizeStr, ok := r.MultipartForm.Value["filesize"]
+	if !ok || len(fileSizeStr) < 1 {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.unavailable.app_error", nil, "", http.StatusBadRequest)
+		return
+	}
+
+	fileSize, err := strconv.ParseInt(fileSizeStr[0], 10, 64)
+	if err != nil {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.integer.app_error", nil, "", http.StatusBadRequest)
+		return
+	}
+
+	fileInfoArray, ok := r.MultipartForm.File["file"]
+	if !ok {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.no_file.app_error", nil, "", http.StatusBadRequest)
+		return
+	}
+
+	if len(fileInfoArray) <= 0 {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.array.app_error", nil, "", http.StatusBadRequest)
+		return
+	}
+
+	fileInfo := fileInfoArray[0]
+
+	fileData, err := fileInfo.Open()
+	if err != nil {
+		c.Err = model.NewAppError("importTeam", "api.team.import_team.open.app_error", nil, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer fileData.Close()
+
+	var log *bytes.Buffer
+	data := map[string]string{}
+
+	var err *model.AppError
+	// slack exportファイル(zip形式)をRESTアップロード
+	if err, log = c.App.SlackImport(fileData, fileSize, c.Params.TeamId); err != nil {
+		c.Err = err
+		c.Err.StatusCode = http.StatusBadRequest
+	}
+	data["results"] = base64.StdEncoding.EncodeToString(log.Bytes())
+
+	if c.Err != nil {
+		w.WriteHeader(c.Err.StatusCode)
+		return
+	}
+
+	w.Write([]byte(model.MapToJson(data)))
 }

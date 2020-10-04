@@ -16,7 +16,7 @@ type TeamMember struct {
 	TeamId   string `db:"TeamId" json:"team_id"`
 	UserId   string `db:"UserId" json:"user_id"`
 	Type     string `db:"Type" json:"type"`
-	Points   int    `db:"Points" json:"points,omitempty"`
+	Points   int    `db:"Points" json:"points"`
 	DeleteAt int64  `db:"DeleteAt" json:"delete_at"`
 }
 
@@ -29,7 +29,7 @@ func (o *TeamMember) IsValid() *AppError {
 		return NewAppError("TeamMember.IsValid", "model.team_member.is_valid.user_id.app_error", nil, "", http.StatusBadRequest)
 	}
 
-	if o.Type != TEAM_MEMBER_TYPE_NORMAL && o.Type != TEAM_MEMBER_TYPE_ADMIN {
+	if len(o.Type) > 0 && o.Type != TEAM_MEMBER_TYPE_NORMAL && o.Type != TEAM_MEMBER_TYPE_ADMIN {
 		return NewAppError("TeamMember.IsValid", "model.team_member.is_valid.type.app_error", nil, "", http.StatusBadRequest)
 	}
 

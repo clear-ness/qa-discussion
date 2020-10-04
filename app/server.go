@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"hash/maphash"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,9 +14,12 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rs/cors"
 
+	"github.com/clear-ness/qa-discussion/clusters"
 	"github.com/clear-ness/qa-discussion/config"
 	"github.com/clear-ness/qa-discussion/mlog"
 	"github.com/clear-ness/qa-discussion/model"
+	"github.com/clear-ness/qa-discussion/services/httpservice"
+	"github.com/clear-ness/qa-discussion/services/l1cache"
 	"github.com/clear-ness/qa-discussion/store"
 	"github.com/clear-ness/qa-discussion/store/cachelayer"
 	"github.com/clear-ness/qa-discussion/store/searchlayer"
@@ -26,8 +31,9 @@ type Server struct {
 	sqlStore store.Store
 	Store    store.Store
 
-	RootRouter *mux.Router
-	Router     *mux.Router
+	RootRouter      *mux.Router
+	Router          *mux.Router
+	WebSocketRouter *WebSocketRouter
 
 	Server      *http.Server
 	ListenAddr  *net.TCPAddr
@@ -41,11 +47,23 @@ type Server struct {
 	newSqlStore func() store.Store
 	newStore    func() store.Store
 
+	sessionCache l1cache.Cache
+
+	CacheProvider l1cache.Provider
+
 	configStore config.Store
 
 	Log *mlog.Logger
 
 	EmailBatching *EmailBatchingJob
+
+	HTTPService httpservice.HTTPService
+
+	hubs     []*Hub
+	hashSeed maphash.Seed
+
+	Cluster   clusters.ClusterInterface
+	clusterId string
 }
 
 func NewServer(options ...Option) (*Server, error) {
@@ -54,6 +72,8 @@ func NewServer(options ...Option) (*Server, error) {
 	s := &Server{
 		goroutineExitSignal: make(chan struct{}, 1),
 		RootRouter:          rootRouter,
+		hashSeed:            maphash.MakeSeed(),
+		clusterId:           model.NewId(),
 	}
 
 	if s.configStore == nil {
@@ -83,6 +103,12 @@ func NewServer(options ...Option) (*Server, error) {
 	//    return nil, errors.Wrapf(err, "unable to load translation files")
 	//}
 
+	s.CacheProvider = l1cache.NewProvider()
+
+	s.sessionCache = s.CacheProvider.NewCache(&l1cache.CacheOptions{
+		Size: model.SESSION_CACHE_SIZE,
+	})
+
 	if s.newSqlStore == nil {
 		s.newSqlStore = func() store.Store {
 			return sqlstore.NewSqlSupplier(s.Config().SqlSettings)
@@ -93,6 +119,14 @@ func NewServer(options ...Option) (*Server, error) {
 	if s.newStore == nil {
 		s.newStore = func() store.Store {
 			newLayer := searchlayer.NewSearchLayer(
+				// TODO: L1キャッシュ層を追加
+				// L1 → L2(redisクラスタ) → DBの順にフォールバックさせる
+				// https://nickcraver.com/blog/2016/02/17/stack-overflow-the-architecture-2016-edition/
+				// We have an L1/L2 cache system with Redis. “L1” is HTTP Cache on the web servers or whatever application is in play.
+				// “L2” is falling back to Redis and fetching the value out.
+				// When one web server gets a cache miss in both L1 and L2, it fetches the value from source (a database query, API call, etc.)
+				// and puts the result in both local cache and Redis. The next server wanting the value may miss L1, but would find the value in L2/Redis, saving a database query or API call.
+				// We use redis's pub/sub to clear L1 caches on other servers when one web server does a removal for consistency,
 				cachelayer.NewCacheLayer(
 					s.sqlStore,
 					s.Config(),
@@ -107,11 +141,24 @@ func NewServer(options ...Option) (*Server, error) {
 	}
 	s.Store = s.newStore()
 
+	s.HTTPService = httpservice.MakeHTTPService(s)
+
+	s.Cluster = clusters.MakeCluster(s)
+
 	subpath, err := utils.GetSubpathFromConfig(s.Config())
 	if err != nil {
 		return nil, err
 	}
 	s.Router = s.RootRouter.PathPrefix(subpath).Subrouter()
+
+	fakeApp := New(ServerConnector(s))
+	fakeApp.HubStart()
+
+	s.WebSocketRouter = &WebSocketRouter{
+		server:   s,
+		handlers: make(map[string]webSocketHandler),
+	}
+	s.WebSocketRouter.app = fakeApp
 
 	if s.EmailBatching != nil {
 		if err := s.EmailBatching.scheduleJobs(); err != nil {
@@ -121,6 +168,10 @@ func NewServer(options ...Option) (*Server, error) {
 	}
 
 	s.FakeApp().InitMigrations()
+
+	s.FakeApp().registerAllClusterMessageHandlers()
+	// redis pub/subにsubscribeしておく
+	s.Cluster.Start(s.clusterId)
 
 	return s, nil
 }
@@ -240,6 +291,8 @@ func (s *Server) StopHTTPServer() {
 func (s *Server) Shutdown() error {
 	mlog.Info("Stopping Server...")
 
+	s.HubStop()
+
 	s.StopHTTPServer()
 
 	if s.EmailBatching != nil {
@@ -282,4 +335,20 @@ func (s *Server) FakeApp() *App {
 	)
 
 	return a
+}
+
+func (a *App) OriginChecker() func(*http.Request) bool {
+	if allowed := *a.Config().ServiceSettings.AllowCorsFrom; allowed != "" {
+		if allowed != "*" {
+			siteURL, err := url.Parse(*a.Config().ServiceSettings.SiteURL)
+			if err == nil {
+				siteURL.Path = ""
+				allowed += " " + siteURL.String()
+			}
+		}
+
+		return utils.OriginChecker(allowed)
+	}
+
+	return nil
 }

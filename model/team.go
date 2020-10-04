@@ -15,7 +15,7 @@ const (
 	TEAM_EMAIL_MAX_LENGTH           = 128
 	TEAM_DESCRIPTION_MAX_LENGTH     = 255
 	TEAM_NAME_MAX_LENGTH            = 64
-	TEAM_NAME_MIN_LENGTH            = 2
+	TEAM_NAME_MIN_LENGTH            = 3
 	TEAM_ALLOWED_DOMAINS_MAX_LENGTH = 500
 
 	TEAM_SEARCH_DEFAULT_LIMIT = 10
@@ -109,6 +109,11 @@ func (o *Team) PreUpdate() {
 	o.UpdateAt = GetMillis()
 	o.Name = SanitizeUnicode(o.Name)
 	o.Description = SanitizeUnicode(o.Description)
+}
+
+func (o *Team) SanitizeInput() {
+	o.LastPictureUpdate = 0
+	o.InviteId = ""
 }
 
 func TeamFromJson(data io.Reader) *Team {

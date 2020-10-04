@@ -72,7 +72,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(token) != 0 {
 		session, err := c.App.GetSession(token)
 		if err != nil {
-			c.Log.Info("Invalid session", mlog.Err(err))
 			if err.StatusCode == http.StatusInternalServerError {
 				c.Err = err
 			} else if h.RequireSession {
